@@ -8,6 +8,7 @@ import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 INVIDIOUS_BASE = "https://raw.githubusercontent.com/kuru-bana/yt-data/main/invidious"
 CACHE_TTL = 5 * 60
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+templates = Jinja2Templates(directory="templates")
 
 
 async def get_instances(category: str) -> list:
@@ -221,43 +223,78 @@ async def api_instances():
 
 # ── HTML page routes ──────────────────────────────────────────────────────────
 
+@app.get("/")
+async def index_page(request: Request):
+    return templates.TemplateResponse(request, "index.html")
+
 @app.get("/dl")
-async def dl_page():
-    return FileResponse("public/dl.html")
+async def dl_page(request: Request):
+    return templates.TemplateResponse(request, "dl.html", {"active": "dl"})
 
 @app.get("/watch")
-async def watch_page():
-    return FileResponse("public/watch.html")
+async def watch_page(request: Request):
+    return templates.TemplateResponse(request, "watch.html")
 
 @app.get("/search")
-async def search_page():
-    return FileResponse("public/search.html")
+async def search_page(request: Request):
+    return templates.TemplateResponse(request, "search.html")
 
 @app.get("/channel")
-async def channel_page():
-    return FileResponse("public/channel.html")
+async def channel_page(request: Request):
+    return templates.TemplateResponse(request, "channel.html")
 
 @app.get("/playlist")
-async def playlist_page():
-    return FileResponse("public/playlist.html")
+async def playlist_page(request: Request):
+    return templates.TemplateResponse(request, "playlist.html")
 
 @app.get("/hashtag")
-async def hashtag_page():
-    return FileResponse("public/hashtag.html")
+async def hashtag_page(request: Request):
+    return templates.TemplateResponse(request, "hashtag.html")
 
 @app.get("/mix")
-async def mix_page():
-    return FileResponse("public/mix.html")
+async def mix_page(request: Request):
+    return templates.TemplateResponse(request, "mix.html")
 
 @app.get("/library")
-async def library_page():
-    return FileResponse("public/library.html")
+async def library_page(request: Request):
+    return templates.TemplateResponse(request, "library.html", {"active": "library"})
 
 @app.get("/settings")
-async def settings_page():
-    return FileResponse("public/settings.html")
+async def settings_page(request: Request):
+    return templates.TemplateResponse(request, "settings.html", {"active": "settings"})
+
+
+@app.get("/chat")
+async def chat_page(request: Request):
+    return FileResponse("templates/chat-page.html")
+
+
+@app.get("/chat-raw")
+async def chat_raw():
+    return FileResponse("templates/chat.html")
+
+
+CHOCO_CHAT_CACHE: dict = {}
+CHOCO_CHAT_TTL = 30 * 60
+
+@app.get("/choco-chat-new")
+async def choco_chat_new():
+    now = time.time()
+    cached = CHOCO_CHAT_CACHE.get("data")
+    if cached and now - cached["time"] < CHOCO_CHAT_TTL:
+        return JSONResponse(cached["json"])
+    try:
+        resp = await http_client.get(
+            "https://raw.githubusercontent.com/kuru-bana/choco-chat-tool/refs/heads/main/url.json"
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        CHOCO_CHAT_CACHE["data"] = {"json": data, "time": now}
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
 
 
 # ── Static files & catch-all ─────────────────────────────────────────────────
 
-app.mount("/", StaticFiles(directory="public", html=True), name="static")
+app.mount("/", StaticFiles(directory="templates/static"), name="static")
