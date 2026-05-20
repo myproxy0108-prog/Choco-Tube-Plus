@@ -158,19 +158,28 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function createVideoCard(video) {
+function isShortVideo(video) {
+  if (video.isShort) return true;
+  const len = parseInt(video.lengthSeconds);
+  return len > 0 && len <= 60;
+}
+
+function createVideoCard(video, { forceShorts = false } = {}) {
   const thumb = getThumbnailUrl(video.videoId);
   const duration = formatDuration(video.lengthSeconds);
   const views = formatViews(video.viewCount);
   const channelIcon = getChannelIconUrl(video.authorThumbnails);
 
+  const isShort = forceShorts || isShortVideo(video);
+
   const a = document.createElement('a');
   a.className = 'video-card';
-  a.href = `/watch?v=${video.videoId}`;
+  a.href = isShort ? `/shorts/${video.videoId}` : `/watch?v=${video.videoId}`;
 
   const badges = [];
   const isLive = video.liveNow || video.publishedText === '0 seconds ago';
   if (isLive) badges.push('<span class="badge-live">LIVE</span>');
+  if (isShort && !isLive) badges.push('<span class="badge-shorts">Shorts</span>');
   if (video.is4k) badges.push('<span class="badge-tag">4K</span>');
   if (video.isVr360) badges.push('<span class="badge-tag">360°</span>');
   if (video.hasCaptions) badges.push('<span class="badge-tag">CC</span>');
@@ -283,8 +292,71 @@ function createResultCard(item) {
   switch (item.type) {
     case 'channel': return createChannelCard(item);
     case 'playlist': return createPlaylistCard(item);
-    default: return createVideoCard(item);
+    default: {
+      if (isShortVideo(item)) return createShortsCard(item);
+      return createVideoCard(item);
+    }
   }
+}
+
+function createShortsCard(video, { channelId = null, searchQuery = null, shortsList = null } = {}) {
+  const a = document.createElement('a');
+  a.className = 'short-card';
+  const base = `/shorts/${video.videoId}`;
+  let href = base;
+  if (channelId) {
+    href = `${base}?channel=${encodeURIComponent(channelId)}`;
+  } else if (searchQuery) {
+    const p = new URLSearchParams({ q: searchQuery });
+    if (shortsList) p.set('list', shortsList);
+    href = `${base}?${p}`;
+  }
+  a.href = href;
+  const thumb = getThumbnailUrl(video.videoId);
+  const duration = formatDuration(video.lengthSeconds);
+  const views = formatViews(video.viewCount);
+  a.innerHTML = `
+    <div class="short-card-thumb">
+      <img src="${thumb}" alt="${escapeHtml(video.title || '')}" loading="lazy" onload="this.classList.add('loaded')" />
+      ${duration ? `<span class="short-card-dur">${duration}</span>` : ''}
+    </div>
+    <div class="short-card-title">${escapeHtml(video.title || '')}</div>
+    ${views ? `<div class="short-card-views">${views} 回視聴</div>` : ''}
+  `;
+  return a;
+}
+
+function createShortsShelf(shorts, { searchQuery = null } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'shorts-shelf';
+  const header = document.createElement('div');
+  header.className = 'shorts-shelf-header';
+  header.innerHTML = `
+    <div class="shorts-shelf-icon">
+      <svg viewBox="0 0 24 24"><path d="M9 8l6 4-6 4V8z"/></svg>
+    </div>
+    <span class="shorts-shelf-title">ショート</span>
+    <span class="shorts-shelf-count">${shorts.length}件</span>
+  `;
+  const scroll = document.createElement('div');
+  scroll.className = 'shorts-shelf-scroll';
+  const shortsList = searchQuery ? shorts.map(v => v.videoId).join(',') : null;
+  shorts.forEach(v => scroll.appendChild(createShortsCard(v, { searchQuery, shortsList })));
+  wrap.appendChild(header);
+  wrap.appendChild(scroll);
+  return wrap;
+}
+
+function appendShortsToShelf(shelfEl, newShorts, allShorts, searchQuery) {
+  if (!shelfEl) return;
+  const scroll = shelfEl.querySelector('.shorts-shelf-scroll');
+  const countEl = shelfEl.querySelector('.shorts-shelf-count');
+  if (!scroll) return;
+  const spinner = shelfEl.querySelector('.shorts-shelf-spinner');
+  if (spinner) spinner.remove();
+  const shortsList = searchQuery ? allShorts.map(v => v.videoId).join(',') : null;
+  newShorts.forEach(v => scroll.appendChild(createShortsCard(v, { searchQuery, shortsList })));
+  if (countEl) countEl.textContent = `${allShorts.length}件`;
 }
 
 function createSkeletonCard() {
@@ -416,6 +488,50 @@ async function fetchMain(apiPath) {
     throw new Error(err.error || `HTTP ${res.status}`);
   }
   return await res.json();
+}
+
+function createCommentItem(c) {
+  const div = document.createElement('div');
+  div.className = 'comment-item';
+
+  const authorHref = c.authorId ? `/channel?id=${encodeURIComponent(c.authorId)}` : null;
+  const thumbs = c.authorThumbnails;
+  const iconUrl = thumbs && thumbs.length
+    ? wsrv(thumbs[thumbs.length - 1].url || thumbs[0].url, 72)
+    : '';
+
+  const likesHtml = c.likeCount
+    ? `<span class="comment-likes">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+        ${c.likeCount.toLocaleString()}
+       </span>`
+    : '';
+
+  const repliesHtml = c.replyCount
+    ? `<span class="comment-replies">返信 ${c.replyCount}</span>`
+    : '';
+
+  div.innerHTML = `
+    <div class="comment-avatar-wrap">
+      ${iconUrl
+        ? `<img class="comment-avatar" src="${iconUrl}" alt="${escapeHtml(c.author || '')}" loading="lazy" onload="this.classList.add('loaded')" />`
+        : `<div class="comment-avatar-placeholder"></div>`
+      }
+    </div>
+    <div class="comment-body">
+      <div class="comment-header">
+        ${authorHref
+          ? `<a class="comment-author${c.authorVerified ? ' verified' : ''}" href="${authorHref}">${escapeHtml(c.author || '')}</a>`
+          : `<span class="comment-author${c.authorVerified ? ' verified' : ''}">${escapeHtml(c.author || '')}</span>`
+        }
+        ${c.publishedText ? `<span class="comment-date">${escapeHtml(c.publishedText)}</span>` : ''}
+        ${c.isPinned ? `<span class="comment-pinned">📌 固定</span>` : ''}
+      </div>
+      <div class="comment-text">${escapeHtml(c.content || '')}</div>
+      <div class="comment-footer">${likesHtml}${repliesHtml}</div>
+    </div>
+  `;
+  return div;
 }
 
 async function fetchStream(apiPath) {
@@ -962,6 +1078,12 @@ let currentPage = parseInt(params.get('page') || '1', 10);
 let isLoading = false;
 let seenVideoIds = new Set();
 
+let allShortsFound = [];
+let shortsSeenIds = new Set();
+let shortsShelfEl = null;
+let shortsAutoGen = 0;
+let currentSearchQuery = '';
+
 function getFilters() {
   return {
     q: document.getElementById('searchInput').value.trim(),
@@ -1021,7 +1143,7 @@ function updateFeaturesLabel() {
   label.textContent = checked.length ? checked.map(c => c.value.toUpperCase()).join(', ') : 'すべて';
 }
 
-const CACHE_TTL = 10 * 60 * 1000;
+const CACHE_TTL = 5 * 60 * 1000;
 
 function cacheKey(filters) {
   return 'search:' + buildApiPath(filters);
@@ -1043,28 +1165,114 @@ function loadCache(filters) {
   } catch { return null; }
 }
 
-function renderResults(results, q) {
+function initShortsSection(q) {
+  const section = document.getElementById('shortsSection');
+  section.innerHTML = '';
+  const shelf = createShortsShelf([], { searchQuery: q });
+  const scroll = shelf.querySelector('.shorts-shelf-scroll');
+  const spinner = document.createElement('div');
+  spinner.className = 'shorts-shelf-spinner';
+  spinner.innerHTML = '<span class="shorts-loading-text">ショートを検索中...</span>';
+  scroll.appendChild(spinner);
+  section.appendChild(shelf);
+  section.hidden = false;
+  shortsShelfEl = shelf;
+}
+
+
+async function startShortsAutoFetch(q, region, gen) {
+  const maxPages = 6;
+  const q1 = q + ' ショート';
+  const q2 = q + ' #shorts';
+
+  async function fetchOnePage(searchQ, page) {
+    if (gen !== shortsAutoGen) return 0;
+    try {
+      const pageParam = page > 1 ? `&page=${page}` : '';
+      const url = `/api/search?q=${encodeURIComponent(searchQ)}&region=${encodeURIComponent(region || 'JP')}${pageParam}`;
+      const raw = await fetchMain(url);
+      if (gen !== shortsAutoGen) return 0;
+      const items = Array.isArray(raw) ? raw : (raw.results || []);
+      const newShorts = items.filter(item =>
+        item.videoId && isShortVideo(item) && !shortsSeenIds.has(item.videoId)
+      );
+      newShorts.forEach(item => {
+        shortsSeenIds.add(item.videoId);
+        allShortsFound.push(item);
+      });
+      if (newShorts.length > 0 && shortsShelfEl) {
+        appendShortsToShelf(shortsShelfEl, newShorts, allShortsFound, q);
+        const section = document.getElementById('shortsSection');
+        if (section) section.hidden = false;
+      }
+      return items.length;
+    } catch (e) {
+      console.warn('Shorts fetch error (' + searchQ + ' p' + page + '):', e);
+      return 0;
+    }
+  }
+
+  let q2Promise = null;
+
+  for (let page = 1; page <= maxPages; page++) {
+    if (gen !== shortsAutoGen) return;
+
+    if (page === 3 && !q2Promise) {
+      q2Promise = (async () => {
+        for (let p = 1; p <= maxPages; p++) {
+          if (gen !== shortsAutoGen) return;
+          const count = await fetchOnePage(q2, p);
+          if (count < 5) break;
+          await new Promise(r => setTimeout(r, 400));
+        }
+      })();
+    }
+
+    const count = await fetchOnePage(q1, page);
+    if (count < 5) break;
+    await new Promise(r => setTimeout(r, 350));
+  }
+
+  if (q2Promise) await q2Promise;
+
+  if (gen === shortsAutoGen && allShortsFound.length === 0 && shortsShelfEl) {
+    const scroll = shortsShelfEl.querySelector('.shorts-shelf-scroll');
+    if (scroll) {
+      const spinner = scroll.querySelector('.shorts-shelf-spinner');
+      if (spinner) spinner.remove();
+      const empty = document.createElement('span');
+      empty.className = 'shorts-empty-text';
+      empty.textContent = 'ショートが見つかりませんでした';
+      scroll.appendChild(empty);
+    }
+  }
+}
+
+function renderRegularResults(results, q) {
   const grid = document.getElementById('resultGrid');
   grid.innerHTML = '';
+
   if (!results.length) {
-    grid.innerHTML = `<div class="empty-state"><p>「${escapeHtml(q)}」の検索結果が見つかりませんでした。</p></div>`;
-    document.getElementById('resultHeader').hidden = true;
-    document.getElementById('pagination').hidden = true;
+    const section = document.getElementById('shortsSection');
+    if (!section || section.hidden) {
+      grid.innerHTML = `<div class="empty-state"><p>「${escapeHtml(q)}」の検索結果が見つかりませんでした。</p></div>`;
+      document.getElementById('resultHeader').hidden = true;
+      document.getElementById('pagination').hidden = true;
+    }
     return;
   }
+
   const missingIcons = [];
   results.forEach(item => {
     const card = createResultCard(item);
     grid.appendChild(card);
     if (!item.authorThumbnails) {
-      if (item.authorId) {
-        missingIcons.push({ card, authorId: item.authorId });
-      } else if (item.playlistId) {
-        missingIcons.push({ card, playlistId: item.playlistId });
-      }
+      if (item.authorId) missingIcons.push({ card, authorId: item.authorId });
+      else if (item.playlistId) missingIcons.push({ card, playlistId: item.playlistId });
     }
   });
   if (missingIcons.length > 0) fillMissingIcons(missingIcons);
+
   const info = document.getElementById('resultInfo');
   info.textContent = `「${q}」の検索結果 — ${results.length}件`;
   document.getElementById('resultHeader').hidden = false;
@@ -1076,22 +1284,49 @@ async function doSearch(resetPage = false) {
   const q = document.getElementById('searchInput').value.trim();
   if (!q) return;
 
-  if (resetPage) { currentPage = 1; seenVideoIds = new Set(); }
+  if (resetPage) {
+    currentPage = 1;
+    seenVideoIds = new Set();
+    allShortsFound = [];
+    shortsSeenIds = new Set();
+    shortsShelfEl = null;
+    shortsAutoGen++;
+    currentSearchQuery = q;
+    const section = document.getElementById('shortsSection');
+    if (section) { section.innerHTML = ''; section.hidden = true; }
+  }
+
   isLoading = true;
 
   const filters = getFilters();
   pushState(filters);
 
+  const isNewQuery = !shortsShelfEl && (resetPage || currentSearchQuery !== q);
+
   if (!resetPage) {
     const cached = loadCache(filters);
     if (cached) {
-      renderResults(cached.results, q);
+      renderRegularResults(cached.results, q);
+      if (isNewQuery) {
+        currentSearchQuery = q;
+        allShortsFound = [];
+        shortsSeenIds = new Set();
+        shortsShelfEl = null;
+        shortsAutoGen++;
+        initShortsSection(q);
+        startShortsAutoFetch(q, filters.region, shortsAutoGen);
+      }
       isLoading = false;
       return;
     }
   }
 
   showResultLoading();
+
+  if (resetPage || isNewQuery) {
+    currentSearchQuery = q;
+    initShortsSection(q);
+  }
 
   try {
     const raw = await fetchMain(buildApiPath(filters));
@@ -1102,8 +1337,35 @@ async function doSearch(resetPage = false) {
       seenVideoIds.add(id);
       return true;
     });
-    saveCache(filters, results);
-    renderResults(results, q);
+
+    const regularResults = results.filter(item =>
+      item.type === 'channel' || item.type === 'playlist' || !isShortVideo(item)
+    );
+
+    if (resetPage || isNewQuery) {
+      const mainShorts = results.filter(item =>
+        item.type !== 'channel' && item.type !== 'playlist' && isShortVideo(item)
+      );
+      if (mainShorts.length > 0) {
+        mainShorts.forEach(item => {
+          if (!shortsSeenIds.has(item.videoId)) {
+            shortsSeenIds.add(item.videoId);
+            allShortsFound.push(item);
+          }
+        });
+        if (shortsShelfEl) {
+          appendShortsToShelf(shortsShelfEl, mainShorts, allShortsFound, q);
+        }
+      }
+    }
+
+    saveCache(filters, regularResults);
+    renderRegularResults(regularResults, q);
+
+    if (resetPage || isNewQuery) {
+      const gen = shortsAutoGen;
+      startShortsAutoFetch(q, filters.region, gen);
+    }
   } catch (e) {
     const grid = document.getElementById('resultGrid');
     grid.innerHTML = `<div class="error-state"><div class="error-icon">⚠️</div><p>検索に失敗しました。しばらく経ってから再試行してください。</p></div>`;
@@ -1663,11 +1925,17 @@ async function loadTab(tab, reset = true) {
       if (tab === 'playlists') {
         items.forEach(item => grid.appendChild(createChannelPlaylistCard(item)));
       } else {
+        const isShortTab = tab === 'shorts';
+        if (isShortTab) {
+          grid.classList.add('shorts-mode');
+        } else {
+          grid.classList.remove('shorts-mode');
+        }
         items.forEach(item => {
           if (!item.authorThumbnails && channelInfo && channelInfo.authorThumbnails) {
             item.authorThumbnails = channelInfo.authorThumbnails;
           }
-          grid.appendChild(createVideoCard(item));
+          grid.appendChild(isShortTab ? createShortsCard(item, { channelId: channelInfo?.authorId }) : createVideoCard(item));
         });
       }
     }
@@ -5777,4 +6045,481 @@ function initSettings() {
   resize();
   initStars();
   draw();
+})();
+
+;(() => {
+  if (!document.body.classList.contains('page-shorts')) return;
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initHeaderSearch();
+    initShortsPage();
+  });
+
+  const EDU_KEYS = [
+    { label: 'choco-1', url: 'https://raw.githubusercontent.com/choco-1515/About-youtube/refs/heads/main/edu/key1.json' },
+    { label: 'choco-2', url: 'https://raw.githubusercontent.com/choco-1515/About-youtube/refs/heads/main/edu/key2.json' },
+    { label: 'choco-3', url: 'https://raw.githubusercontent.com/choco-1515/About-youtube/refs/heads/main/edu/key3.json' },
+  ];
+
+  let eduParams = [];
+  let queue = [];
+  let queueIdx = 0;
+  let isFetchingMore = false;
+  let channelMode = false;
+  let channelId = null;
+  let channelContinuation = null;
+  let searchMode = false;
+  let searchQueryStr = null;
+  let searchContinuation = null;
+  let searchShortPage1 = 1;
+  let searchShortPage2 = 0;
+
+  // ===== EDU PARAMS =====
+  function getParamIdx() {
+    const sel = document.getElementById('sfParamSelect');
+    return sel ? parseInt(sel.value, 10) : 0;
+  }
+
+  function getEduSrc(videoId) {
+    const idx = getParamIdx();
+    let param = (eduParams[idx] && eduParams[idx].value) ? eduParams[idx].value : '?autoplay=1';
+    const sep = param.includes('?') ? '&' : '?';
+    if (!param.includes('loop=')) {
+      param += `${sep}loop=1&playlist=${videoId}`;
+    }
+    return `https://www.youtubeeducation.com/embed/${videoId}${param}`;
+  }
+
+  async function fetchEduParams() {
+    try {
+      const results = await Promise.all(EDU_KEYS.map(k => fetch(k.url).then(r => r.json())));
+      eduParams = results.map((json, i) => ({ label: EDU_KEYS[i].label, value: json.value || '' }));
+      const sel = document.getElementById('sfParamSelect');
+      if (sel) {
+        sel.innerHTML = '';
+        eduParams.forEach((p, i) => {
+          const opt = document.createElement('option');
+          opt.value = i;
+          opt.textContent = p.label;
+          sel.appendChild(opt);
+        });
+        sel.selectedIndex = 0;
+      }
+    } catch (_) {}
+  }
+
+  // ===== PLAYER =====
+  function loadPlayer(videoId) {
+    const iframe = document.getElementById('sfIframe');
+    const skeleton = document.getElementById('sfSkeleton');
+    if (!iframe) return;
+    if (skeleton) skeleton.style.display = '';
+    iframe.src = getEduSrc(videoId);
+    iframe.onload = () => { if (skeleton) skeleton.style.display = 'none'; };
+    const watchBtn = document.getElementById('sfWatchBtn');
+    const ytBtn = document.getElementById('sfYtBtn');
+    if (watchBtn) watchBtn.href = `/watch?v=${videoId}`;
+    if (ytBtn) ytBtn.href = `https://www.youtube.com/shorts/${videoId}`;
+  }
+
+  function renderOverlay(data, videoId) {
+    const titleEl = document.getElementById('sfOverlayTitle');
+    const metaEl = document.getElementById('sfOverlayMeta');
+    const chLink = document.getElementById('sfChLink');
+    const chAvatar = document.getElementById('sfChAvatar');
+    const chName = document.getElementById('sfChName');
+    if (titleEl) titleEl.textContent = data.title || '';
+    document.title = (data.title ? data.title + ' - ' : '') + 'Inv-tube Shorts';
+    const parts = [];
+    if (data.viewCount) parts.push(formatViews(data.viewCount) + ' 回視聴');
+    if (data.publishedText) parts.push(data.publishedText);
+    if (metaEl) metaEl.textContent = parts.join(' · ');
+    if (chLink && data.authorId) chLink.href = `/channel?id=${encodeURIComponent(data.authorId)}`;
+    if (chName) chName.textContent = data.author || '';
+    const thumb = getChannelIconUrl(data.authorThumbnails || []);
+    if (thumb && chAvatar) { chAvatar.src = thumb; chAvatar.style.display = ''; }
+    const watchBtn = document.getElementById('sfWatchBtn');
+    const ytBtn = document.getElementById('sfYtBtn');
+    if (watchBtn) watchBtn.href = `/watch?v=${videoId}`;
+    if (ytBtn) ytBtn.href = `https://www.youtube.com/shorts/${videoId}`;
+  }
+
+  function updateNavBtns() {
+    const prevBtn = document.getElementById('sfPrevBtn');
+    const nextBtn = document.getElementById('sfNextBtn');
+    if (prevBtn) prevBtn.disabled = queueIdx <= 0;
+    const hasMoreFetchable = (channelMode && channelContinuation) || (searchMode && searchContinuation);
+    if (nextBtn) nextBtn.disabled = queueIdx >= queue.length - 1 && !hasMoreFetchable;
+  }
+
+  // ===== QUEUE / CHANNEL CONTEXT =====
+  async function fetchChannelShortsPage(chId, continuation) {
+    let url = `/api/channels/${encodeURIComponent(chId)}/shorts`;
+    if (continuation) url += `?continuation=${encodeURIComponent(continuation)}`;
+    return fetchMain(url);
+  }
+
+  async function buildChannelQueue(chId, startId) {
+    try {
+      let allVideos = [];
+      let cont = null;
+      let page = 0;
+      const MAX_PAGES = 4;
+      do {
+        const data = await fetchChannelShortsPage(chId, cont);
+        const vids = data.videos || data.shorts || [];
+        allVideos.push(...vids);
+        cont = data.continuation || null;
+        page++;
+        if (allVideos.some(v => v.videoId === startId)) break;
+      } while (cont && page < MAX_PAGES);
+
+      channelContinuation = cont;
+      const existing = new Set();
+      const items = allVideos.filter(v => {
+        if (!v.videoId || existing.has(v.videoId)) return false;
+        existing.add(v.videoId);
+        return true;
+      }).map(v => ({ videoId: v.videoId, meta: v }));
+
+      if (!items.length) return false;
+
+      const startIdx = items.findIndex(v => v.videoId === startId);
+      if (startIdx >= 0) {
+        queue = items;
+        queueIdx = startIdx;
+      } else {
+        queue = [{ videoId: startId, meta: null }, ...items];
+        queueIdx = 0;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function fetchAndQueueMeta(idx) {
+    const item = queue[idx];
+    if (!item || item.meta) return;
+    try {
+      const data = await withRetry(() => fetchMain(`/api/videos/${item.videoId}`));
+      queue[idx] = { ...item, meta: data };
+      if (idx === queueIdx) renderOverlay(data, item.videoId);
+    } catch (_) {}
+  }
+
+  async function prefetchMoreRecs(videoId, data) {
+    if (isFetchingMore) return;
+    isFetchingMore = true;
+    try {
+      const src = data || await fetchMain(`/api/videos/${videoId}`);
+      const recs = (src.recommendedVideos || []).filter(v => isShortVideo(v));
+      const existing = new Set(queue.map(q => q.videoId));
+      const newItems = recs.filter(v => !existing.has(v.videoId)).slice(0, 12)
+        .map(v => ({ videoId: v.videoId, meta: v }));
+      if (newItems.length) { queue.push(...newItems); updateNavBtns(); }
+    } catch (_) {}
+    isFetchingMore = false;
+  }
+
+  async function prefetchMoreChannel() {
+    if (!channelMode || !channelId || !channelContinuation || isFetchingMore) return;
+    isFetchingMore = true;
+    try {
+      const data = await fetchChannelShortsPage(channelId, channelContinuation);
+      const vids = data.videos || data.shorts || [];
+      channelContinuation = data.continuation || null;
+      const existing = new Set(queue.map(q => q.videoId));
+      const newItems = vids.filter(v => v.videoId && !existing.has(v.videoId))
+        .map(v => ({ videoId: v.videoId, meta: v }));
+      if (newItems.length) { queue.push(...newItems); updateNavBtns(); }
+    } catch (_) {}
+    isFetchingMore = false;
+  }
+
+  async function fetchSearchShortsPage(q, continuation) {
+    let url = `/api/search?q=${encodeURIComponent(q)}&type=video`;
+    if (continuation) url += `&continuation=${encodeURIComponent(continuation)}`;
+    return fetchMain(url);
+  }
+
+  async function fetchShortPage(searchQ, page) {
+    try {
+      const pageParam = page > 1 ? `&page=${page}` : '';
+      const url = `/api/search?q=${encodeURIComponent(searchQ)}${pageParam}`;
+      const raw = await fetchMain(url);
+      const items = Array.isArray(raw) ? raw : (raw.results || []);
+      return items.filter(v => v.type !== 'channel' && v.type !== 'playlist' && isShortVideo(v));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async function buildSearchQueue(q, startId, preList) {
+    try {
+      searchQueryStr = q;
+      searchShortPage1 = 1;
+      searchShortPage2 = 0;
+      if (preList && preList.length) {
+        const existing = new Set();
+        const items = preList.filter(id => {
+          if (!id || existing.has(id)) return false;
+          existing.add(id);
+          return true;
+        }).map(id => ({ videoId: id, meta: null }));
+        const startIdx = items.findIndex(v => v.videoId === startId);
+        if (startIdx >= 0) {
+          queue = items;
+          queueIdx = startIdx;
+          updateNavBtns();
+          return true;
+        }
+      }
+      const data = await fetchSearchShortsPage(q, null);
+      const results = data.results || [];
+      const vids = results.filter(v => v.type !== 'channel' && v.type !== 'playlist' && isShortVideo(v));
+      searchContinuation = data.continuation || null;
+      const existing = new Set();
+      const items = vids.filter(v => {
+        if (!v.videoId || existing.has(v.videoId)) return false;
+        existing.add(v.videoId);
+        return true;
+      }).map(v => ({ videoId: v.videoId, meta: v }));
+      if (!items.length) return false;
+      const startIdx = items.findIndex(v => v.videoId === startId);
+      if (startIdx >= 0) {
+        queue = items;
+        queueIdx = startIdx;
+      } else {
+        queue = [{ videoId: startId, meta: null }, ...items];
+        queueIdx = 0;
+      }
+      updateNavBtns();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function prefetchMoreSearch() {
+    if (!searchMode || !searchQueryStr || isFetchingMore) return;
+    isFetchingMore = true;
+    try {
+      const existing = new Set(queue.map(item => item.videoId));
+      const tasks = [];
+
+      searchShortPage1++;
+      tasks.push(fetchShortPage(searchQueryStr + ' ショート', searchShortPage1));
+
+      if (searchShortPage1 >= 3 || searchShortPage2 > 0) {
+        searchShortPage2++;
+        tasks.push(fetchShortPage(searchQueryStr + ' #shorts', searchShortPage2));
+      }
+
+      const results = await Promise.all(tasks);
+      const newItems = [];
+      results.flat().forEach(v => {
+        if (v.videoId && !existing.has(v.videoId)) {
+          existing.add(v.videoId);
+          newItems.push({ videoId: v.videoId, meta: v });
+        }
+      });
+      if (newItems.length) { queue.push(...newItems); updateNavBtns(); }
+    } catch (_) {}
+    isFetchingMore = false;
+  }
+
+  function navigateTo(idx) {
+    if (idx < 0 || idx >= queue.length) return;
+    queueIdx = idx;
+    const item = queue[queueIdx];
+    let url;
+    if (channelMode && channelId) {
+      url = `/shorts/${item.videoId}?channel=${encodeURIComponent(channelId)}`;
+    } else if (searchMode && searchQueryStr) {
+      url = `/shorts/${item.videoId}?q=${encodeURIComponent(searchQueryStr)}`;
+    } else {
+      url = `/shorts/${item.videoId}`;
+    }
+    history.pushState(null, '', url);
+    loadPlayer(item.videoId);
+    if (item.meta) {
+      renderOverlay(item.meta, item.videoId);
+    } else {
+      const chName = document.getElementById('sfChName');
+      if (chName) chName.textContent = '読み込み中...';
+      const titleEl = document.getElementById('sfOverlayTitle');
+      if (titleEl) titleEl.textContent = '';
+      fetchAndQueueMeta(queueIdx);
+    }
+    updateNavBtns();
+    if (queueIdx >= queue.length - 3) {
+      if (channelMode) prefetchMoreChannel();
+      else if (searchMode) prefetchMoreSearch();
+      else prefetchMoreRecs(item.videoId, item.meta);
+    }
+    closeSfComments();
+  }
+
+  // ===== COMMENTS =====
+  let sfCommentsContinuation = null;
+  let sfCommentsLoading = false;
+  let sfCommentsSortBy = 'top';
+  let sfCommentsVideoId = null;
+
+  function openSfComments(videoId) {
+    const panel = document.getElementById('sfCommentsPanel');
+    if (!panel) return;
+    const btn = document.getElementById('sfCommentBtn');
+    if (btn) btn.classList.add('active');
+    panel.hidden = false;
+    if (sfCommentsVideoId !== videoId) {
+      sfCommentsVideoId = videoId;
+      sfCommentsContinuation = null;
+      loadSfComments(false);
+    }
+  }
+
+  function closeSfComments() {
+    const panel = document.getElementById('sfCommentsPanel');
+    if (!panel) return;
+    panel.hidden = true;
+    const btn = document.getElementById('sfCommentBtn');
+    if (btn) btn.classList.remove('active');
+  }
+
+  function toggleSfComments() {
+    const panel = document.getElementById('sfCommentsPanel');
+    if (!panel) return;
+    if (panel.hidden) {
+      const vid = queue[queueIdx]?.videoId;
+      if (vid) openSfComments(vid);
+    } else {
+      closeSfComments();
+    }
+  }
+
+  async function loadSfComments(append = false) {
+    if (sfCommentsLoading) return;
+    sfCommentsLoading = true;
+    const list = document.getElementById('sfCpList');
+    const moreWrap = document.getElementById('sfCpMore');
+    const moreBtn = document.getElementById('sfCpMoreBtn');
+    if (moreBtn) moreBtn.disabled = true;
+
+    if (!append && list) {
+      list.innerHTML = '<p style="color:#e2e8f0;font-size:.82rem;padding:0.75rem 0.25rem;opacity:0.7;">読み込み中...</p>';
+    }
+
+    try {
+      let url = `/api/comments/${sfCommentsVideoId}?sort_by=${sfCommentsSortBy}`;
+      if (append && sfCommentsContinuation) url += `&continuation=${encodeURIComponent(sfCommentsContinuation)}`;
+      const data = await withRetry(() => fetchMain(url), 3);
+
+      if (!append && list) list.innerHTML = '';
+
+      const comments = Array.isArray(data.comments) ? data.comments : [];
+      if (!append && !comments.length) {
+        if (list) list.innerHTML = '<p style="color:#94a3b8;font-size:.82rem;padding:0.5rem 0.25rem;">コメントはありません。</p>';
+      } else {
+        if (list) {
+          comments.forEach((c, idx) => {
+            try {
+              list.appendChild(createCommentItem(c));
+            } catch (itemErr) {
+              console.error('createCommentItem[' + idx + '] error:', itemErr, c);
+            }
+          });
+        }
+      }
+      sfCommentsContinuation = data.continuation || null;
+      if (moreWrap) moreWrap.hidden = !sfCommentsContinuation;
+      if (moreBtn) moreBtn.disabled = false;
+    } catch (e) {
+      console.error('sf comments error:', e);
+      const msg = (e && (e.message || String(e))) || '不明なエラー';
+      if (!append && list) list.innerHTML = '<p style="color:#f87171;font-size:.82rem;padding:0.5rem 0.25rem;">エラー: ' + escapeHtml(msg) + '</p>';
+    }
+    sfCommentsLoading = false;
+  }
+
+  function initSfComments() {
+    document.getElementById('sfCommentBtn')?.addEventListener('click', toggleSfComments);
+    document.getElementById('sfCpClose')?.addEventListener('click', closeSfComments);
+    document.getElementById('sfCpMoreBtn')?.addEventListener('click', () => loadSfComments(true));
+
+    document.querySelectorAll('.sf-cp-sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.sf-cp-sort-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        sfCommentsSortBy = btn.dataset.sort || 'top';
+        sfCommentsContinuation = null;
+        loadSfComments(false);
+      });
+    });
+  }
+
+  // ===== INIT =====
+  function initShortsPage() {
+    const pathParts = window.location.pathname.split('/');
+    const startId = pathParts[pathParts.length - 1];
+    if (!startId) return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    channelId = urlParams.get('channel') || null;
+    channelMode = !!channelId;
+    const sqParam = urlParams.get('q') || null;
+    const listParam = urlParams.get('list') || null;
+    searchMode = !!sqParam;
+
+    queue = [{ videoId: startId, meta: null }];
+    queueIdx = 0;
+
+    document.getElementById('sfParamSelect')?.addEventListener('change', () => {
+      if (queue[queueIdx]) loadPlayer(queue[queueIdx].videoId);
+    });
+    document.getElementById('sfPrevBtn')?.addEventListener('click', () => navigateTo(queueIdx - 1));
+    document.getElementById('sfNextBtn')?.addEventListener('click', () => navigateTo(queueIdx + 1));
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowUp') { e.preventDefault(); navigateTo(queueIdx - 1); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); navigateTo(queueIdx + 1); }
+    });
+
+    initSfComments();
+
+    (async () => {
+      const [, metaResult] = await Promise.all([
+        fetchEduParams(),
+        (async () => {
+          try { return await withRetry(() => fetchMain(`/api/videos/${startId}`)); } catch { return null; }
+        })(),
+      ]);
+
+      loadPlayer(startId);
+
+      if (metaResult) {
+        queue[0].meta = metaResult;
+        renderOverlay(metaResult, startId);
+      }
+
+      if (channelMode && channelId) {
+        const ok = await buildChannelQueue(channelId, startId);
+        if (!ok) {
+          channelMode = false;
+          if (metaResult) prefetchMoreRecs(startId, metaResult);
+        }
+      } else if (searchMode && sqParam) {
+        const preList = listParam ? listParam.split(',').filter(Boolean) : null;
+        const ok = await buildSearchQueue(sqParam, startId, preList);
+        if (!ok) {
+          searchMode = false;
+          if (metaResult) prefetchMoreRecs(startId, metaResult);
+        }
+      } else if (metaResult) {
+        prefetchMoreRecs(startId, metaResult);
+      }
+
+      updateNavBtns();
+    })();
+  }
 })();
