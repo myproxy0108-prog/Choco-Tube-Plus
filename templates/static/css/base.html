@@ -1,0 +1,31 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+
+:root {
+  --bg: #050914;
+  --surface: rgba(13, 8, 40, 0.82);
+  --surface2: rgba(22, 14, 58, 0.9);
+  --border: rgba(139, 92, 246, 0.22);
+  --border-glow: rgba(139, 92, 246, 0.55);
+  --accent: #7c3aed;
+  --accent-bright: #a78bfa;
+  --cyan: #06b6d4;
+  --pink: #ec4899;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --card-bg: rgba(9, 5, 28, 0.72);
+  --glow-purple: rgba(124, 58, 237, 0.45);
+  --glow-cyan: rgba(6, 182, 212, 0.35);
+  --skeleton-base: rgba(22, 14, 58, 0.9);
+  --skeleton-shine: rgba(45, 28, 100, 0.9);
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
