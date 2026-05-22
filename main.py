@@ -152,11 +152,19 @@ def map_path(app_path: str) -> tuple:
 @app.get("/proxy/main/{path:path}")
 async def proxy_main(path: str, request: Request):
     try:
-        qs = request.url.query
+        params = dict(request.query_params)
+        pin_instance = params.pop("_pin_instance", None)
+        qs = urlencode(params) if params else ""
         app_path = "/" + path + ("?" + qs if qs else "")
         category, invidious_path = map_path(app_path)
-        result = await proxy_parallel(category, invidious_path)
-        return JSONResponse(result["data"])
+        if pin_instance:
+            result = await _try_instance(pin_instance.rstrip("/"), invidious_path)
+        else:
+            result = await proxy_parallel(category, invidious_path)
+        headers = {}
+        if result.get("used_instance"):
+            headers["X-Instance-Used"] = result["used_instance"]
+        return JSONResponse(result["data"], headers=headers)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
 
