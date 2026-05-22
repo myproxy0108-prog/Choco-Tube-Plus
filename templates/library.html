@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}ライブラリ{% endblock %}
+{% block title %}ライブラリ — Choco-tube-plus{% endblock %}
 {% block body_class %}page-library{% endblock %}
 {% set active = "library" %}
 {% block content %}
@@ -115,18 +115,69 @@
 
     <!-- お気に入り -->
     <div class="lib-content" id="favPanel" hidden>
-      <div class="lib-hist-toolbar" id="favToolbar" hidden>
-        <button class="lib-clear-btn" id="clearFavBtn">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-          お気に入りをすべて削除
+      <!-- サブタブ -->
+      <div class="lib-fav-subtabs">
+        <button class="lib-fav-subtab active" data-favtab="videos">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          動画
+        </button>
+        <button class="lib-fav-subtab" data-favtab="playlists">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          プレイリスト
+        </button>
+        <button class="lib-fav-subtab" data-favtab="mixes">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+          ミックス
         </button>
       </div>
-      <div class="lib-empty" id="favEmpty" hidden>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-        <p>お気に入りはありません</p>
-        <p class="lib-empty-hint">動画ページのハートボタンでお気に入りに追加できます</p>
+
+      <!-- 動画お気に入り -->
+      <div id="favVideosPanel">
+        <div class="lib-hist-toolbar" id="favToolbar" hidden>
+          <button class="lib-clear-btn" id="clearFavBtn">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            すべて削除
+          </button>
+        </div>
+        <div class="lib-empty" id="favEmpty" hidden>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          <p>お気に入りの動画はありません</p>
+          <p class="lib-empty-hint">動画ページのハートボタンでお気に入りに追加できます</p>
+        </div>
+        <div class="video-grid" id="favGrid"></div>
       </div>
-      <div class="video-grid" id="favGrid"></div>
+
+      <!-- プレイリストお気に入り -->
+      <div id="favPlPanel" hidden>
+        <div class="lib-hist-toolbar" id="favPlToolbar" hidden>
+          <button class="lib-clear-btn" id="clearFavPlBtn">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            すべて削除
+          </button>
+        </div>
+        <div class="lib-empty" id="favPlEmpty" hidden>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          <p>お気に入りのプレイリストはありません</p>
+          <p class="lib-empty-hint">プレイリストページのハートボタンでお気に入りに追加できます</p>
+        </div>
+        <div class="lib-pl-grid" id="favPlGrid"></div>
+      </div>
+
+      <!-- ミックスお気に入り -->
+      <div id="favMixPanel" hidden>
+        <div class="lib-hist-toolbar" id="favMixToolbar" hidden>
+          <button class="lib-clear-btn" id="clearFavMixBtn">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            すべて削除
+          </button>
+        </div>
+        <div class="lib-empty" id="favMixEmpty" hidden>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+          <p>お気に入りのミックスはありません</p>
+          <p class="lib-empty-hint">ミックスページのハートボタンでお気に入りに追加できます</p>
+        </div>
+        <div class="lib-pl-grid" id="favMixGrid"></div>
+      </div>
     </div>
 
   </main>
