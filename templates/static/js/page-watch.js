@@ -1964,7 +1964,7 @@ async function initPlaylistPanel(playlistId, globalIndex) {
     let data = getPlaylistCache(cacheKey);
     if (!data) {
       data = await withRetry(() => fetchMain(`/api/playlists/${encodeURIComponent(playlistId)}?page=${page}`), 10);
-      setPlaylistCache(cacheKey, data);
+      if (data && data.videos && data.videos.length > 0) setPlaylistCache(cacheKey, data);
     }
     const videos = data.videos || [];
     const totalVideos = data.videoCount || videos.length;
