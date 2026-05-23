@@ -1,5 +1,6 @@
 import asyncio
 import re
+import subprocess
 import time
 from contextlib import asynccontextmanager
 from urllib.parse import quote, urlencode
@@ -9,6 +10,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.base import BaseHTTPMiddleware
 
 INVIDIOUS_BASE = "https://raw.githubusercontent.com/kuru-bana/yt-data/main/invidious"
 INNERTUBE_BASE = "https://choco-youtube-js.onrender.com"
@@ -16,7 +18,7 @@ CACHE_TTL = 5 * 60
 
 category_cache: dict = {}
 http_client: httpx.AsyncClient = None
-
+    
 
 _CLIENT_TIMEOUT = httpx.Timeout(connect=5.0, read=18.0, write=5.0, pool=5.0)
 _CLIENT_LIMITS = httpx.Limits(max_keepalive_connections=20, keepalive_expiry=30.0)
@@ -33,6 +35,28 @@ async def get_client() -> httpx.AsyncClient:
     return http_client
 
 
+KEEPALIVE_TARGETS = [
+    f"{INNERTUBE_BASE}/version",
+]
+_keepalive_self_url: str = ""
+
+
+async def _periodic_keepalive():
+    """Ping self and dependent services every 10 minutes to prevent cold starts."""
+    await asyncio.sleep(60)  # wait a bit after startup before first ping
+    while True:
+        targets = list(KEEPALIVE_TARGETS)
+        if _keepalive_self_url:
+            targets.append(f"{_keepalive_self_url}/whats")
+        for t in targets:
+            try:
+                client = await get_client()
+                await client.get(t, timeout=10)
+            except Exception:
+                pass
+        await asyncio.sleep(10 * 60)  # ping every 10 minutes
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
@@ -41,12 +65,31 @@ async def lifespan(app: FastAPI):
         limits=_CLIENT_LIMITS,
         follow_redirects=True,
     )
+    task = asyncio.create_task(_periodic_keepalive())
     yield
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
     await http_client.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
+
+def _get_static_ver() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=3
+        )
+        h = result.stdout.strip()
+        if h:
+            return h
+    except Exception:
+        pass
+    return str(int(time.time()))
+
+_STATIC_VER = _get_static_ver()
+templates.env.globals["static_ver"] = _STATIC_VER
 
 
 async def get_instances(category: str) -> list:
@@ -585,7 +628,10 @@ async def _ping_keepalive(self_url: str):
 
 @app.get("/")
 async def index_page(request: Request):
+    global _keepalive_self_url
     self_url = str(request.base_url).rstrip("/")
+    if not _keepalive_self_url:
+        _keepalive_self_url = self_url
     asyncio.create_task(_ping_keepalive(self_url))
     return templates.TemplateResponse(request, "index.html")
 
@@ -664,4 +710,12 @@ async def choco_chat_new():
 
 # ── Static files & catch-all ─────────────────────────────────────────────────
 
+class StaticCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
+app.add_middleware(StaticCacheMiddleware)
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
