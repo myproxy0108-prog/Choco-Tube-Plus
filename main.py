@@ -575,7 +575,7 @@ async def whats():
 
 @app.get("/version")
 async def version():
-    return {"ver": "1.10"}
+    return {"ver": "1.11"}
 
 
 LINKLIST_URL = "https://raw.githubusercontent.com/kuru-bana/Link-list/refs/heads/main/choco-tube-plus.json"
@@ -684,6 +684,40 @@ async def chat_page(request: Request):
 @app.get("/chat-raw")
 async def chat_raw():
     return FileResponse("templates/chat.html")
+
+
+_EDU_PARAMS_URLS = [
+    {"label": "choco-1", "url": "https://raw.githubusercontent.com/choco-1515/About-youtube/refs/heads/main/edu/key1.json"},
+    {"label": "choco-2", "url": "https://raw.githubusercontent.com/choco-1515/About-youtube/refs/heads/main/edu/key2.json"},
+    {"label": "choco-3", "url": "https://raw.githubusercontent.com/choco-1515/About-youtube/refs/heads/main/edu/key3.json"},
+]
+_EDU_PARAMS_CACHE: dict = {}
+_EDU_PARAMS_TTL = 30 * 60
+
+
+@app.get("/api/edu-params")
+async def api_edu_params():
+    now = time.time()
+    cached = _EDU_PARAMS_CACHE.get("data")
+    if cached and now - cached["time"] < _EDU_PARAMS_TTL:
+        return JSONResponse(cached["json"])
+    try:
+        client = await get_client()
+        responses = await asyncio.gather(
+            *[client.get(e["url"], timeout=8) for e in _EDU_PARAMS_URLS],
+            return_exceptions=True,
+        )
+        result = []
+        for i, r in enumerate(responses):
+            if isinstance(r, Exception) or not r.is_success:
+                result.append({"label": _EDU_PARAMS_URLS[i]["label"], "value": ""})
+            else:
+                data = r.json()
+                result.append({"label": _EDU_PARAMS_URLS[i]["label"], "value": data.get("value", "")})
+        _EDU_PARAMS_CACHE["data"] = {"json": result, "time": now}
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
 
 
 CHOCO_CHAT_CACHE: dict = {}
