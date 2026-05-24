@@ -209,6 +209,128 @@ function setupQualities(formatStreams) {
 let hqActive = false;
 let hqSyncRemovers = [];
 let lastStreamSrc = '';
+// ── iframe 再生位置トラッキング ──
+// YouTube IFrame API の postMessage で実際の currentTime を取得する
+let _iframeCurrentTime = 0;   // IFrame API から取得した実際の再生位置
+let _iframeStartSec    = 0;   // iframe 起動時の開始秒（フォールバック用）
+let _iframeStartWall   = 0;   // iframe 起動時のタイムスタンプ（フォールバック用）
+let _iframeEl          = null; // 現在アクティブな iframe 要素
+let _iframePolling     = null; // setInterval の ID
+let _iframeDuration    = 0;   // iframe 動画の尺（onStateChange duration補完用）
+let _clipStartSec      = -1;  // 再生区間: 開始秒 (-1 = 未設定)
+let _clipEndSec        = -1;  // 再生区間: 終了秒 (-1 = 未設定)
+
+function parseTimeSec(s) {
+  const t = (s || '').trim();
+  if (!t) return -1;
+  if (/^\d+(\.\d+)?$/.test(t)) return parseFloat(t);
+  const parts = t.split(':').map(p => parseInt(p, 10));
+  if (parts.some(isNaN) || parts.length < 2 || parts.length > 3) return -1;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parts[0] * 3600 + parts[1] * 60 + parts[2];
+}
+
+function _sendIframeCmd(fn, args) {
+  if (!_iframeEl || !_iframeEl.contentWindow) return;
+  try {
+    _iframeEl.contentWindow.postMessage(JSON.stringify({ event: 'command', func: fn, args: args || [] }), '*');
+  } catch (_) {}
+}
+
+function _sendListening() {
+  if (!_iframeEl || !_iframeEl.contentWindow) return;
+  try {
+    _iframeEl.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+  } catch (_) {}
+}
+
+// postMessage でリアルタイムの currentTime を受け取る
+window.addEventListener('message', function(e) {
+  if (!_iframeEl) return;
+  try {
+    const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+    if (!data) return;
+    if (data.event === 'readyToListen') {
+      _sendListening();
+    } else if (data.event === 'infoDelivery') {
+      // currentTime を更新
+      const t = data.info && (data.info.currentTime ?? data.info.currentTimeFloat);
+      if (typeof t === 'number' && isFinite(t) && t > 0) _iframeCurrentTime = t;
+      // duration を補完
+      const _dur = data.info && data.info.duration;
+      if (typeof _dur === 'number' && isFinite(_dur) && _dur > 0) _iframeDuration = _dur;
+    } else if (data.event === 'onStateChange') {
+      const _state = data.info;
+      // info=0: 自然終了 / info=2: 一時停止（終端付近でYouTubeがpauseを送る場合あり）
+      if (_state === 0 || _state === 2) {
+        const isEnded = _state === 0;
+        const isNearEnd = _state === 2 && _iframeDuration > 0 && _iframeCurrentTime > 0 &&
+          (_iframeDuration - _iframeCurrentTime) <= 5;
+        if (isEnded || isNearEnd) {
+          const _s = getSettings();
+          const restartSec = _clipStartSec >= 0 ? _clipStartSec : 0;
+          if (!listParam && _s.loop) {
+            // ループ: クリップ開始位置（または先頭）から再生し直す
+            _sendIframeCmd('loadVideoById', [{ videoId: currentVideoId, startSeconds: restartSec }]);
+          } else if (isEnded && !listParam && _s.autoplayNext) {
+            // 次の動画へ自動移動（ended のみ。near-end では発火しない）
+            if (_relatedVideos.length > 0) {
+              window.location.href = '/watch?v=' + encodeURIComponent(_relatedVideos[0].videoId);
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+});
+
+function startIframeTracking(iframeEl, startSec) {
+  stopIframeTracking();
+  _iframeEl          = iframeEl;
+  _iframeCurrentTime = 0;
+  _iframeStartSec    = startSec || 0;
+  _iframeStartWall   = Date.now();
+  // ハンドシェイク（1.5秒後）
+  setTimeout(_sendListening, 1500);
+  // 1秒ごとに currentTime をポーリング & clipEnd チェック
+  _iframePolling = setInterval(function() {
+    _sendIframeCmd('getCurrentTime', []);
+    // 再生区間: 終了位置チェック
+    if (_clipEndSec >= 0 && _iframeCurrentTime > 0 && _iframeCurrentTime >= _clipEndSec) {
+      const _s = getSettings();
+      const restartSec = _clipStartSec >= 0 ? _clipStartSec : 0;
+      if (_s.loop) {
+        _sendIframeCmd('loadVideoById', [{ videoId: currentVideoId, startSeconds: restartSec }]);
+      } else {
+        _sendIframeCmd('seekTo', [_clipEndSec, true]);
+        _sendIframeCmd('pauseVideo', []);
+      }
+    }
+  }, 1000);
+}
+
+function stopIframeTracking() {
+  if (_iframePolling) { clearInterval(_iframePolling); _iframePolling = null; }
+  _iframeEl          = null;
+  _iframeCurrentTime = 0;
+  _iframeStartSec    = 0;
+  _iframeStartWall   = 0;
+}
+
+function getIframeCurrentTime() {
+  if (_iframeCurrentTime > 0) return _iframeCurrentTime;
+  // IFrame API からまだ値が届いていない場合は壁時計でフォールバック
+  if (_iframeStartWall > 0) {
+    return _iframeStartSec + (Date.now() - _iframeStartWall) / 1000;
+  }
+  return 0;
+}
+
+function getEstimatedCurrentTime() {
+  const player = document.getElementById('videoPlayer');
+  if (_iframeEl) return getIframeCurrentTime();
+  return player ? player.currentTime : 0;
+}
 let volState = (() => {
   const s = getSettings();
   const vol = Math.max(0, Math.min(1, (s.defaultVolume ?? 100) / 100));
@@ -217,6 +339,7 @@ let volState = (() => {
 let currentStreamData = null;
 let currentVideoMeta = null;
 let currentVideoId = '';
+let _relatedVideos = [];
 let streamOnlyMode = 'normal'; // 'normal' | 'audio' | 'video'
 let streamBestAudioUrl = '';
 let streamAudioFormats = [];
@@ -502,7 +625,8 @@ function initModeBar(videoId) {
 
   modeStream.addEventListener('click', () => {
     if (modeStream.classList.contains('active')) return;
-    const ct = player.currentTime;
+    const ct = getEstimatedCurrentTime();
+    stopIframeTracking();
     if (hqActive) teardownHQ();
     modeStream.classList.add('active');
     modeNocookie.classList.remove('active');
@@ -540,7 +664,8 @@ function initModeBar(videoId) {
 
   modeHQ.addEventListener('click', () => {
     if (modeHQ.classList.contains('active')) return;
-    const ct = player.currentTime;
+    const ct = getEstimatedCurrentTime();
+    stopIframeTracking();
     lastStreamSrc = (streamOnlyMode === 'audio' && lastNormalStreamSrc) ? lastNormalStreamSrc : player.src;
     if (streamOnlyMode !== 'normal') {
       streamOnlyMode = 'normal';
@@ -576,7 +701,8 @@ function initModeBar(videoId) {
 
   modeNocookie.addEventListener('click', () => {
     if (modeNocookie.classList.contains('active')) return;
-    const ct = player.currentTime;
+    const ct = getEstimatedCurrentTime();
+    stopIframeTracking();
     if (hqActive) teardownHQ();
     modeNocookie.classList.add('active');
     modeStream.classList.remove('active');
@@ -596,8 +722,12 @@ function initModeBar(videoId) {
     document.getElementById('qualityBar').setAttribute('hidden', '');
     document.getElementById('vctrls').classList.remove('vctrls-show');
     setOverlayQualMode('none');
-    nocookiePlayer.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1`;
+    const _ncStart = ct > 1 ? `&start=${Math.floor(ct)}` : '';
+    const _ncPlay  = ct > 1 || getSettings().autoplay ? 1 : 0;
+    const _ncStartSec = ct > 1 ? ct : 0;
+    nocookiePlayer.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=${_ncPlay}${_ncStart}&enablejsapi=1`;
     nocookiePlayer.removeAttribute('hidden');
+    startIframeTracking(nocookiePlayer, _ncStartSec);
   });
 
   // ── Edu mode ──
@@ -632,15 +762,40 @@ function initModeBar(videoId) {
 
   fetchEduParams();
 
-  function getEduSrc() {
+  function getEduSrc(startSec = 0) {
     const idx = eduSelect ? parseInt(eduSelect.value, 10) : 0;
-    const param = (eduParams[idx] && eduParams[idx].value) ? eduParams[idx].value : '?autoplay=1';
+    let param = (eduParams[idx] && eduParams[idx].value) ? eduParams[idx].value : '?autoplay=1';
+
+    // postMessage が機能するように競合・干渉するパラメータを除去する
+    // origin= はドメインをロックして postMessage をブロックするため必ず除去
+    param = param
+      .replace(/([?&])enablejsapi=[^&]*/g, '')
+      .replace(/([?&])origin=[^&]*/g, '')
+      .replace(/([?&])autoplay=[^&]*/g, '')
+      .replace(/([?&])loop=[^&]*/g, '')
+      .replace(/([?&])playlist=[^&]*/g, '')
+      .replace(/([?&])start=[^&]*/g, '')
+      .replace(/\?&/g, '?')
+      .replace(/&&+/g, '&')
+      .replace(/[?&]$/, '');
+
+    // ?が消えて &パラメータだけ残った場合、先頭の & を ? に変換
+    if (!param.includes('?') && param.includes('&')) {
+      param = param.replace('&', '?');
+    }
+
+    const shouldPlay = startSec > 0 || getSettings().autoplay;
+    const autoplayVal = shouldPlay ? '1' : '0';
+    const sep = param.includes('?') ? '&' : '?';
     const muteParam = params.get('muted') === '1' ? '&mute=1' : '';
-    return `https://www.youtubeeducation.com/embed/${videoId}${param}${muteParam}`;
+    const startParam = startSec > 0 ? `&start=${Math.floor(startSec)}` : '';
+
+    return `https://www.youtubeeducation.com/embed/${videoId}${param}${sep}autoplay=${autoplayVal}&enablejsapi=1${muteParam}${startParam}`;
   }
 
   function activateEdu() {
-    const ct = player.currentTime;
+    const ct = getEstimatedCurrentTime();
+    stopIframeTracking();
     if (hqActive) teardownHQ();
     modeEdu.classList.add('active');
     modeStream.classList.remove('active');
@@ -660,8 +815,10 @@ function initModeBar(videoId) {
     document.getElementById('vctrls').classList.remove('vctrls-show');
     setOverlayQualMode('none');
     if (eduPlayer) {
-      eduPlayer.src = getEduSrc();
+      const eduStartSec = ct > 1 ? ct : 0;
+      eduPlayer.src = getEduSrc(eduStartSec);
       eduPlayer.removeAttribute('hidden');
+      startIframeTracking(eduPlayer, eduStartSec);
     }
   }
 
@@ -672,7 +829,11 @@ function initModeBar(videoId) {
 
   if (eduSelect) eduSelect.addEventListener('change', () => {
     if (modeEdu && modeEdu.classList.contains('active') && eduPlayer) {
-      eduPlayer.src = getEduSrc();
+      const ct = getEstimatedCurrentTime();
+      stopIframeTracking();
+      const eduStartSec = ct > 1 ? ct : 0;
+      eduPlayer.src = getEduSrc(eduStartSec);
+      startIframeTracking(eduPlayer, eduStartSec);
     }
   });
 
@@ -984,7 +1145,9 @@ function setupPlayer(streamData, videoId) {
 
     if (!isExternalEmbedModeActive()) {
       player.removeAttribute('hidden');
-      tryAutoplay(player, null);
+      if (getSettings().autoplay) {
+        tryAutoplay(player, null);
+      }
     }
 
     if (playerErrorHandler) {
@@ -1910,7 +2073,9 @@ async function initPlaylistPanel(playlistId, globalIndex) {
       const nextVideo = videos[activeIndex + 1];
       const nextUrl = buildHref(nextVideo, activeIndex + 1);
       document.getElementById('videoPlayer').addEventListener('ended', () => {
-        window.location.href = nextUrl;
+        if (getSettings().autoplayNext) {
+          window.location.href = nextUrl;
+        }
       });
     }
   }
@@ -2518,6 +2683,195 @@ function initCustomControls() {
   const _initSettings = getSettings();
   if (_initSettings.defaultSpeed !== 1) setSpeed(_initSettings.defaultSpeed);
   player.loop = listParam ? false : !!_initSettings.loop;
+
+  // ── 再生設定アコーディオン + トグル ──
+  {
+    const PB_OPEN_KEY = 'choco_pb_settings_open';
+
+    // アコーディオン要素
+    const pbHeader = document.getElementById('playbackInfoHeader');
+    const pbBody   = document.getElementById('playbackInfoBody');
+    const pbToggle = document.getElementById('playbackInfoToggle');
+
+    // 開閉状態を localStorage から復元
+    let pbOpen = localStorage.getItem(PB_OPEN_KEY) === '1';
+    function _pbApplyOpen(open) {
+      pbOpen = open;
+      if (pbBody)   { if (open) pbBody.removeAttribute('hidden'); else pbBody.setAttribute('hidden', ''); }
+      if (pbToggle)  pbToggle.textContent = open ? '－' : '＋';
+      if (pbHeader)  pbHeader.setAttribute('aria-expanded', open ? 'true' : 'false');
+      try { localStorage.setItem(PB_OPEN_KEY, open ? '1' : '0'); } catch (_) {}
+    }
+    _pbApplyOpen(pbOpen);
+
+    if (pbHeader) pbHeader.addEventListener('click', () => _pbApplyOpen(!pbOpen));
+
+    // スイッチ状態ヘルパー
+    function _pbSetState(btn, checked) {
+      if (!btn) return;
+      btn.setAttribute('aria-checked', checked ? 'true' : 'false');
+      btn.setAttribute('data-state', checked ? 'checked' : 'unchecked');
+      const thumb = btn.querySelector('.switch-thumb');
+      if (thumb) thumb.setAttribute('data-state', checked ? 'checked' : 'unchecked');
+    }
+
+    const pbLoop        = document.getElementById('pbLoopToggle');
+    const pbAutoplay    = document.getElementById('pbAutoplayToggle');
+    const pbSavePos     = document.getElementById('pbSavePositionToggle');
+    const pbAutoNext    = document.getElementById('pbAutoNextToggle');
+    const pbLoopRow     = document.getElementById('pbLoopRow');
+    const pbAutoNextRow = document.getElementById('pbAutoNextRow');
+
+    // 初期値を反映
+    const _ps = getSettings();
+    _pbSetState(pbLoop,     !listParam && !!_ps.loop);
+    _pbSetState(pbAutoplay, _ps.autoplay !== false);
+    _pbSetState(pbSavePos,  !!_ps.savePosition);
+    _pbSetState(pbAutoNext, !!_ps.autoplayNext);
+
+    // プレイリスト中はループ・次へ自動を無効表示
+    if (listParam) {
+      if (pbLoopRow)     pbLoopRow.classList.add('disabled');
+      if (pbAutoNextRow) pbAutoNextRow.classList.add('disabled');
+    }
+
+    // 設定保存ヘルパー
+    function _pbPersist(updates) {
+      saveSettings(Object.assign({}, getSettings(), updates));
+    }
+
+    // ループトグル
+    if (pbLoop) pbLoop.addEventListener('click', () => {
+      if (listParam) return;
+      const next = pbLoop.getAttribute('data-state') !== 'checked';
+      _pbSetState(pbLoop, next);
+      player.loop = next;
+      if (next) {
+        _pbSetState(pbAutoNext, false);
+        _pbPersist({ loop: true, autoplayNext: false });
+      } else {
+        _pbPersist({ loop: false });
+      }
+    });
+
+    // 自動再生トグル
+    if (pbAutoplay) pbAutoplay.addEventListener('click', () => {
+      const next = pbAutoplay.getAttribute('data-state') !== 'checked';
+      _pbSetState(pbAutoplay, next);
+      _pbPersist({ autoplay: next });
+    });
+
+    // 位置保存トグル
+    if (pbSavePos) pbSavePos.addEventListener('click', () => {
+      const next = pbSavePos.getAttribute('data-state') !== 'checked';
+      _pbSetState(pbSavePos, next);
+      _pbPersist({ savePosition: next });
+    });
+
+    // 次へ自動トグル
+    if (pbAutoNext) pbAutoNext.addEventListener('click', () => {
+      if (listParam) return;
+      const next = pbAutoNext.getAttribute('data-state') !== 'checked';
+      _pbSetState(pbAutoNext, next);
+      if (next) {
+        _pbSetState(pbLoop, false);
+        player.loop = false;
+        _pbPersist({ autoplayNext: true, loop: false });
+      } else {
+        _pbPersist({ autoplayNext: false });
+      }
+    });
+  }
+
+  // ── 再生区間 (clip range) ──
+  {
+    const clipStartInput  = document.getElementById('clipStartInput');
+    const clipEndInput    = document.getElementById('clipEndInput');
+    const clipStartError  = document.getElementById('clipStartError');
+    const clipEndError    = document.getElementById('clipEndError');
+    const clipApplyBtn    = document.getElementById('clipApplyBtn');
+    const clipClearBtn    = document.getElementById('clipClearBtn');
+    const clipActiveLabel = document.getElementById('clipActiveLabel');
+
+    function _clipUpdateActive() {
+      if (!clipActiveLabel) return;
+      if (_clipStartSec >= 0 || _clipEndSec >= 0) {
+        const parts = [];
+        if (_clipStartSec >= 0) parts.push('開始:' + _clipStartSec + 's');
+        if (_clipEndSec >= 0)   parts.push('終了:' + _clipEndSec + 's');
+        clipActiveLabel.textContent = '✓ ' + parts.join(' / ');
+        clipActiveLabel.removeAttribute('hidden');
+        if (clipClearBtn) clipClearBtn.removeAttribute('hidden');
+      } else {
+        clipActiveLabel.setAttribute('hidden', '');
+        if (clipClearBtn) clipClearBtn.setAttribute('hidden', '');
+      }
+    }
+
+    function _validateClipInputs() {
+      let valid = true;
+      if (clipStartInput && clipStartError) {
+        const v = parseTimeSec(clipStartInput.value);
+        const hasErr = clipStartInput.value !== '' && v < 0;
+        if (hasErr) { clipStartError.removeAttribute('hidden'); valid = false; }
+        else           clipStartError.setAttribute('hidden', '');
+      }
+      if (clipEndInput && clipEndError) {
+        const v = parseTimeSec(clipEndInput.value);
+        const hasErr = clipEndInput.value !== '' && v < 0;
+        if (hasErr) { clipEndError.removeAttribute('hidden'); valid = false; }
+        else           clipEndError.setAttribute('hidden', '');
+      }
+      return valid;
+    }
+
+    if (clipStartInput) clipStartInput.addEventListener('input', _validateClipInputs);
+    if (clipEndInput)   clipEndInput.addEventListener('input',   _validateClipInputs);
+
+    if (clipApplyBtn) clipApplyBtn.addEventListener('click', () => {
+      if (!_validateClipInputs()) return;
+      _clipStartSec = clipStartInput ? parseTimeSec(clipStartInput.value) : -1;
+      _clipEndSec   = clipEndInput   ? parseTimeSec(clipEndInput.value)   : -1;
+      const seekSec = _clipStartSec >= 0 ? _clipStartSec : 0;
+
+      if (isExternalEmbedModeActive()) {
+        // iframe モード: seekTo postMessage
+        _sendIframeCmd('seekTo', [seekSec, true]);
+      } else if (!player.hidden) {
+        // ネイティブプレイヤー
+        player.currentTime = seekSec;
+        if (getSettings().autoplay) player.play().catch(() => {});
+      }
+      _clipUpdateActive();
+    });
+
+    if (clipClearBtn) clipClearBtn.addEventListener('click', () => {
+      _clipStartSec = -1;
+      _clipEndSec   = -1;
+      if (clipStartInput) clipStartInput.value = '';
+      if (clipEndInput)   clipEndInput.value   = '';
+      if (clipStartError) clipStartError.setAttribute('hidden', '');
+      if (clipEndError)   clipEndError.setAttribute('hidden', '');
+      _clipUpdateActive();
+    });
+
+    // ネイティブプレイヤー: timeupdate で終了位置チェック
+    player.addEventListener('timeupdate', function _clipTimeUpdate() {
+      if (_clipEndSec >= 0 && player.currentTime >= _clipEndSec) {
+        const _s = getSettings();
+        const restartSec = _clipStartSec >= 0 ? _clipStartSec : 0;
+        if (_s.loop && !player.loop) {
+          // ループ設定ON・HTMLループOFF時はJS制御でループ
+          player.currentTime = restartSec;
+          player.play().catch(() => {});
+        } else if (!_s.loop) {
+          player.pause();
+          player.currentTime = _clipEndSec;
+        }
+      }
+    });
+  }
+
   {
     const initVol = Math.max(0, Math.min(1, (_initSettings.defaultVolume ?? 100) / 100));
     const ae = audioEl();
@@ -2737,8 +3091,39 @@ async function initWatch(videoId) {
     setHQInstanceLabel(invInstance);
 
     setupPlayer(streamData, videoId);
+
+    // ── 再生位置の復元と保存 ──
+    {
+      const _posPlayer = document.getElementById('videoPlayer');
+      const _savedPos = getSavedPosition(videoId);
+      if (getSettings().savePosition && _savedPos > 5) {
+        _posPlayer.addEventListener('canplay', () => {
+          if (_posPlayer.currentTime < 1) _posPlayer.currentTime = _savedPos;
+        }, { once: true });
+      }
+      let _lastPosSave = 0;
+      _posPlayer.addEventListener('timeupdate', () => {
+        if (!getSettings().savePosition) return;
+        const now = Date.now();
+        if (now - _lastPosSave < 5000) return;
+        _lastPosSave = now;
+        const t = _posPlayer.currentTime;
+        const dur = _posPlayer.duration;
+        if (t > 5) {
+          const durKnown = dur && isFinite(dur);
+          if (!durKnown || t < dur - 5) {
+            savePosition(videoId, t);
+          } else {
+            clearSavedPosition(videoId);
+          }
+        }
+      });
+      _posPlayer.addEventListener('ended', () => clearSavedPosition(videoId), { once: true });
+    }
+
     renderVideoInfo(metaData, videoId);
     const _related = metaData.recommendedVideos || [];
+    _relatedVideos = _related;
     renderRelated(_related);
 
     // Autoplay next (settings) — skip if in playlist/mix context
