@@ -135,16 +135,18 @@ async function loadHomeTab() {
   homeArea.innerHTML = '';
   homeArea.hidden = false;
 
-  const skeletonRow = document.createElement('div');
-  skeletonRow.className = 'home-skeleton';
-  for (let i = 0; i < 4; i++) {
+  const skeletonWrap = document.createElement('div');
+  skeletonWrap.className = 'ch-home-loading';
+  for (let i = 0; i < 3; i++) {
     const s = document.createElement('div');
-    s.className = 'home-shelf-skeleton';
-    s.innerHTML = `<div class="skeleton-line" style="width:140px;height:16px;border-radius:5px;margin-bottom:12px;"></div>
-      <div style="display:flex;gap:12px;">${Array.from({length:4}, () => `<div style="width:220px;flex-shrink:0;"><div class="skeleton-thumb" style="width:220px;height:124px;border-radius:8px;margin-bottom:8px;"></div><div class="skeleton-line" style="width:180px;height:12px;border-radius:4px;margin-bottom:5px;"></div><div class="skeleton-line" style="width:100px;height:10px;border-radius:4px;"></div></div>`).join('')}</div>`;
-    skeletonRow.appendChild(s);
+    s.className = 'ch-home-shelf-skeleton';
+    s.innerHTML = `<div class="ch-home-shelf-title-sk"></div>
+      <div class="ch-home-shelf-row">${Array.from({length:5}, () =>
+        `<div class="skeleton-card" style="width:220px;flex-shrink:0;"><div class="skeleton-thumb"></div><div class="skeleton-info"><div class="skeleton-line skeleton-title"></div><div class="skeleton-line skeleton-title-short"></div></div></div>`
+      ).join('')}</div>`;
+    skeletonWrap.appendChild(s);
   }
-  homeArea.appendChild(skeletonRow);
+  homeArea.appendChild(skeletonWrap);
 
   try {
     const res = await fetch(`/api/channel-home/${encodeURIComponent(channelId)}`, { signal: AbortSignal.timeout(20000) });
@@ -191,31 +193,54 @@ function createHomeFeaturedVideo(item) {
   const videoId = item.id;
   if (!videoId) return null;
   const title = item.title?.text || '';
+  const desc = item.description?.text || '';
+  const views = item.view_count?.text || '';
+  const published = item.published?.text || '';
+  const thumb = wsrv(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`, 640);
 
   const div = document.createElement('div');
-  div.className = 'home-featured';
+  div.className = 'ch-home-featured';
   div.innerHTML = `
-    <div class="home-featured-label">注目動画</div>
-    <div class="home-featured-player-wrap">
-      <div class="home-featured-iframe-box">
-        <iframe class="home-featured-iframe" src="about:blank" frameborder="0"
-          allow="autoplay; encrypted-media; picture-in-picture"
-          allowfullscreen></iframe>
+    <div class="ch-home-section-title">注目動画</div>
+    <div class="ch-featured-video">
+      <div class="ch-featured-thumb-wrap">
+        <img class="ch-featured-thumb" src="${thumb}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />
+        <div class="ch-featured-play-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="52" height="52"><circle cx="12" cy="12" r="12" fill="rgba(0,0,0,0.55)"/><polygon points="10,8 18,12 10,16" fill="white"/></svg>
+        </div>
       </div>
-      <div class="home-featured-title">${escapeHtml(title)}</div>
-      <a class="home-featured-watchlink" href="/watch?v=${encodeURIComponent(videoId)}&mode=edu&muted=1">watchページで見る →</a>
+      <div class="ch-featured-info">
+        <a class="ch-featured-title-link" href="/watch?v=${encodeURIComponent(videoId)}">
+          <div class="ch-featured-title">${escapeHtml(title)}</div>
+        </a>
+        ${(views || published) ? `<div class="ch-featured-meta">${[views, published].filter(Boolean).map(escapeHtml).join(' · ')}</div>` : ''}
+        ${desc ? `<div class="ch-featured-desc">${escapeHtml(desc)}</div>` : ''}
+        <a class="home-featured-watchlink" href="/watch?v=${encodeURIComponent(videoId)}">watchページで見る →</a>
+      </div>
     </div>
   `;
 
-  const iframe = div.querySelector('.home-featured-iframe');
-  fetch('https://raw.githubusercontent.com/choco-1515/About-youtube/refs/heads/main/edu/key1.json')
+  const thumbWrap = div.querySelector('.ch-featured-thumb-wrap');
+  fetch('/api/edu-params')
     .then(r => r.json())
-    .then(json => {
-      const param = json.value || '?autoplay=1';
+    .then(params => {
+      const param = (Array.isArray(params) && params[0]?.value) ? params[0].value : '?autoplay=1';
+      const iframe = document.createElement('iframe');
+      iframe.className = 'ch-featured-iframe';
       iframe.src = `https://www.youtubeeducation.com/embed/${videoId}${param}&mute=1`;
+      iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+      iframe.allowFullscreen = true;
+      thumbWrap.innerHTML = '';
+      thumbWrap.appendChild(iframe);
     })
     .catch(() => {
+      const iframe = document.createElement('iframe');
+      iframe.className = 'ch-featured-iframe';
       iframe.src = `https://www.youtubeeducation.com/embed/${videoId}?autoplay=1&mute=1`;
+      iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+      iframe.allowFullscreen = true;
+      thumbWrap.innerHTML = '';
+      thumbWrap.appendChild(iframe);
     });
 
   return div;
@@ -223,15 +248,32 @@ function createHomeFeaturedVideo(item) {
 
 function createHomeShelf(title, items) {
   const div = document.createElement('div');
-  div.className = 'home-shelf';
+  div.className = 'ch-home-shelf';
 
   const header = document.createElement('div');
-  header.className = 'home-shelf-header';
-  header.textContent = title;
+  header.className = 'ch-home-shelf-header';
+  const titleEl = document.createElement('div');
+  titleEl.className = 'ch-home-section-title';
+  titleEl.textContent = title;
+  header.appendChild(titleEl);
+
+  const videoIds = items
+    .filter(i => i.type === 'GridVideo' || (i.type === 'LockupView' && i.content_type === 'VIDEO'))
+    .map(i => i.video_id || i.content_id)
+    .filter(Boolean);
+  if (videoIds.length > 0) {
+    const playAllBtn = document.createElement('button');
+    playAllBtn.className = 'ch-home-play-all-btn';
+    playAllBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13"><polygon points="5,3 19,12 5,21"/></svg> すべて再生`;
+    playAllBtn.addEventListener('click', () => {
+      location.href = `/watch?v=${encodeURIComponent(videoIds[0])}`;
+    });
+    header.appendChild(playAllBtn);
+  }
   div.appendChild(header);
 
   const row = document.createElement('div');
-  row.className = 'home-shelf-row';
+  row.className = 'ch-home-shelf-scroll';
 
   for (const item of items) {
     if (item.type === 'GridVideo') {
@@ -271,16 +313,16 @@ function createHomeVideoCard(item) {
   const published = item.published?.text || '';
 
   const a = document.createElement('a');
-  a.className = 'home-video-card';
+  a.className = 'ch-home-video-card';
   a.href = `/watch?v=${encodeURIComponent(videoId)}`;
   a.innerHTML = `
-    <div class="home-vc-thumb-wrap">
-      <img class="home-vc-thumb" src="${thumb}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />
-      ${durationText ? `<span class="home-vc-duration">${escapeHtml(durationText)}</span>` : ''}
+    <div class="ch-home-card-thumb">
+      <img class="ch-home-card-thumb-img" src="${thumb}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />
+      ${durationText ? `<span class="duration-badge">${escapeHtml(durationText)}</span>` : ''}
     </div>
-    <div class="home-vc-info">
-      <div class="home-vc-title">${escapeHtml(title)}</div>
-      <div class="home-vc-meta">${[views, published].filter(Boolean).map(escapeHtml).join(' · ')}</div>
+    <div class="ch-home-card-info">
+      <div class="ch-home-card-title">${escapeHtml(title)}</div>
+      <div class="ch-home-card-meta">${[views, published].filter(Boolean).map(s => `<span>${escapeHtml(s)}</span>`).join('')}</div>
     </div>
   `;
   return a;
@@ -302,16 +344,16 @@ function createHomeLockupCard(item) {
 
   const isShort = item.content_type === 'SHORT';
   const a = document.createElement('a');
-  a.className = isShort ? 'home-video-card home-shorts-card' : 'home-video-card';
+  a.className = isShort ? 'ch-home-video-card ch-home-shorts-card' : 'ch-home-video-card';
   a.href = isShort ? `/shorts/${encodeURIComponent(videoId)}` : `/watch?v=${encodeURIComponent(videoId)}`;
   a.innerHTML = `
-    <div class="${isShort ? 'home-vc-thumb-wrap home-vc-thumb-portrait' : 'home-vc-thumb-wrap'}">
-      <img class="home-vc-thumb" src="${thumbUrl}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />
-      ${durationText ? `<span class="home-vc-duration">${escapeHtml(durationText)}</span>` : ''}
+    <div class="${isShort ? 'ch-home-card-thumb ch-home-card-portrait' : 'ch-home-card-thumb'}">
+      <img class="ch-home-card-thumb-img" src="${thumbUrl}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />
+      ${durationText ? `<span class="duration-badge">${escapeHtml(durationText)}</span>` : ''}
     </div>
-    <div class="home-vc-info">
-      <div class="home-vc-title">${escapeHtml(title)}</div>
-      <div class="home-vc-meta">${[views, published].filter(Boolean).map(escapeHtml).join(' · ')}</div>
+    <div class="ch-home-card-info">
+      <div class="ch-home-card-title">${escapeHtml(title)}</div>
+      <div class="ch-home-card-meta">${[views, published].filter(Boolean).map(s => `<span>${escapeHtml(s)}</span>`).join('')}</div>
     </div>
   `;
   return a;
@@ -325,18 +367,18 @@ function createHomeLockupPlaylistCard(item) {
   const thumbUrl = images.length ? wsrv(images[0].url, 360) : null;
 
   const a = document.createElement('a');
-  a.className = 'home-video-card';
+  a.className = 'ch-home-video-card';
   a.href = `/playlist?list=${encodeURIComponent(playlistId)}`;
   a.innerHTML = `
-    <div class="home-vc-thumb-wrap">
+    <div class="ch-home-card-thumb" style="background:linear-gradient(135deg,#1a1230,#0d1f35)">
       ${thumbUrl
-        ? `<img class="home-vc-thumb" src="${thumbUrl}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />`
-        : `<div class="home-vc-playlist-placeholder"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></div>`
+        ? `<img class="ch-home-card-thumb-img" src="${thumbUrl}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />`
+        : ''
       }
+      <div class="playlist-count-badge"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>再生リスト</div>
     </div>
-    <div class="home-vc-info">
-      <div class="home-vc-title">${escapeHtml(title)}</div>
-      <div class="home-vc-meta" style="color:var(--accent);font-size:0.72rem;">再生リスト</div>
+    <div class="ch-home-card-info">
+      <div class="ch-home-card-title">${escapeHtml(title)}</div>
     </div>
   `;
   return a;
@@ -348,15 +390,18 @@ function createHomeReelShelf(item) {
   if (!items.length) return null;
 
   const div = document.createElement('div');
-  div.className = 'home-shelf';
+  div.className = 'ch-home-shelf';
 
   const header = document.createElement('div');
-  header.className = 'home-shelf-header';
-  header.textContent = title;
+  header.className = 'ch-home-shelf-header';
+  const titleEl = document.createElement('div');
+  titleEl.className = 'ch-home-section-title';
+  titleEl.textContent = title;
+  header.appendChild(titleEl);
   div.appendChild(header);
 
   const row = document.createElement('div');
-  row.className = 'home-shelf-row';
+  row.className = 'ch-home-shelf-scroll';
 
   for (const si of items) {
     if (si.type === 'ShortsLockupView') {
@@ -366,6 +411,16 @@ function createHomeReelShelf(item) {
   }
 
   if (!row.children.length) return null;
+
+  row.addEventListener('click', e => {
+    const card = e.target.closest('a[data-vid]');
+    if (!card) return;
+    const allIds = Array.from(row.querySelectorAll('a[data-vid]')).map(a => a.dataset.vid);
+    if (allIds.length > 1) {
+      try { sessionStorage.setItem('chHomeShortQueue', JSON.stringify(allIds)); } catch (_) {}
+    }
+  });
+
   div.appendChild(row);
   return div;
 }
@@ -379,14 +434,15 @@ function createHomeShortsLockupCard(item) {
   const title = accText.replace(/,\s*[\d.,]+[KMB]?\s*(million\s+)?views?\s*[-–]\s*play\s+Short\s*$/i, '').trim() || videoId;
 
   const a = document.createElement('a');
-  a.className = 'home-video-card home-shorts-card';
+  a.className = 'ch-home-video-card ch-home-shorts-card';
   a.href = `/shorts/${encodeURIComponent(videoId)}`;
+  a.dataset.vid = videoId;
   a.innerHTML = `
-    <div class="home-vc-thumb-wrap home-vc-thumb-portrait">
-      <img class="home-vc-thumb" src="${thumbUrl}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />
+    <div class="ch-home-card-thumb ch-home-card-portrait">
+      <img class="ch-home-card-thumb-img" src="${thumbUrl}" alt="${escapeHtml(title)}" loading="lazy" onload="this.classList.add('loaded')" />
     </div>
-    <div class="home-vc-info">
-      <div class="home-vc-title">${escapeHtml(title)}</div>
+    <div class="ch-home-card-info">
+      <div class="ch-home-card-title">${escapeHtml(title)}</div>
     </div>
   `;
   return a;
@@ -400,12 +456,17 @@ function createHomeChannelCard(item) {
   const subs = item.subscribers?.text || '';
 
   const a = document.createElement('a');
-  a.className = 'home-channel-card';
+  a.className = 'ch-home-channel-card';
   a.href = id ? `/channel?id=${encodeURIComponent(id)}` : '#';
   a.innerHTML = `
-    ${icon ? `<img class="home-ch-icon" src="${icon}" alt="${escapeHtml(name)}" loading="lazy" onload="this.classList.add('loaded')" />` : `<div class="home-ch-icon-placeholder"></div>`}
-    <div class="home-ch-name">${escapeHtml(name)}</div>
-    ${subs ? `<div class="home-ch-subs">${escapeHtml(subs)}</div>` : ''}
+    <div class="ch-home-channel-avatar-wrap">
+      ${icon
+        ? `<img class="ch-home-channel-avatar" src="${icon}" alt="${escapeHtml(name)}" loading="lazy" onload="this.classList.add('loaded')" />`
+        : `<div class="ch-home-channel-avatar-placeholder"></div>`
+      }
+    </div>
+    <div class="ch-home-channel-name">${escapeHtml(name)}</div>
+    ${subs ? `<div class="ch-home-channel-sub">${escapeHtml(subs)}</div>` : ''}
   `;
   return a;
 }
