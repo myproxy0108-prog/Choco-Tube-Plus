@@ -5,6 +5,9 @@ import time
 from contextlib import asynccontextmanager
 from urllib.parse import quote, urlencode
 
+from youtube_transcript_api import YouTubeTranscriptApi as _YTA_Class
+_YTA = _YTA_Class()
+
 import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -838,6 +841,78 @@ async def choco_chat_new():
         data = resp.json()
         CHOCO_CHAT_CACHE["data"] = {"json": data, "time": now}
         return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+# ── Transcript endpoints (Invidious → youtube-transcript-api fallback) ────────
+
+@app.get("/api/transcript-langs/{video_id}")
+async def transcript_langs(video_id: str):
+    """Return available caption tracks. Tries Invidious first, falls back to youtube-transcript-api."""
+    # 1. Try Invidious captions
+    try:
+        result = await proxy_parallel("captions", f"/api/v1/captions/{video_id}")
+        data = result.get("data", {})
+        captions = []
+        if isinstance(data, dict):
+            captions = data.get("captions", [])
+        elif isinstance(data, list):
+            captions = data
+        if captions:
+            return JSONResponse([{
+                "label": c.get("label") or c.get("languageCode") or c.get("language_code") or "?",
+                "language_code": c.get("languageCode") or c.get("language_code") or "",
+                "source": "invidious",
+                "is_generated": c.get("isGenerated", False),
+            } for c in captions])
+    except Exception:
+        pass
+
+    # 2. Fallback: youtube-transcript-api
+    try:
+        loop = asyncio.get_event_loop()
+        transcript_list = await loop.run_in_executor(None, lambda: list(_YTA.list(video_id)))
+        tracks = []
+        for t in transcript_list:
+            tracks.append({
+                "label": t.language,
+                "language_code": t.language_code,
+                "source": "yta",
+                "is_generated": getattr(t, "is_generated", False),
+                "is_translatable": getattr(t, "is_translatable", False),
+            })
+        return JSONResponse(tracks)
+    except Exception as e:
+        return JSONResponse({"error": str(e), "tracks": []}, status_code=502)
+
+
+@app.get("/api/transcript-data/{video_id}")
+async def transcript_data(video_id: str, lang: str = "en", source: str = "auto"):
+    """Return transcript lines. source=yta skips Invidious and uses youtube-transcript-api directly."""
+    # 1. Try Invidious transcript (unless caller specifies yta)
+    if source != "yta":
+        try:
+            result = await proxy_parallel("transcripts", f"/api/v1/transcripts/{video_id}?lang={quote(lang)}")
+            data = result.get("data", [])
+            lines = []
+            if isinstance(data, list):
+                lines = data
+            elif isinstance(data, dict):
+                lines = data.get("transcript", data.get("captions", []))
+            if lines:
+                return JSONResponse(lines)
+        except Exception:
+            pass
+
+    # 2. Fallback / direct: youtube-transcript-api
+    try:
+        loop = asyncio.get_event_loop()
+        def _fetch():
+            fetched = _YTA.fetch(video_id, languages=[lang])
+            return [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
+        lines = await loop.run_in_executor(None, _fetch)
+        return JSONResponse(lines)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
 
