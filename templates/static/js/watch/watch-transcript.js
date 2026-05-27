@@ -100,17 +100,35 @@ async function loadTranscript(videoId, lang, langBtns) {
   }
 }
 
+let _transcriptAbort = null;
+
 async function initTranscript(videoId) {
   const section = document.getElementById('transcriptSection');
   const body = document.getElementById('transcriptBody');
   const header = document.getElementById('transcriptHeader');
   const chevron = document.querySelector('.transcript-chevron');
   const langsEl = document.getElementById('transcriptLangs');
+  const content = document.getElementById('transcriptContent');
 
   if (!section || !body) return;
 
+  // 前回のリスナーをすべて解除し、UIをリセット
+  if (_transcriptAbort) { _transcriptAbort.abort(); }
+  _transcriptAbort = new AbortController();
+  const signal = _transcriptAbort.signal;
+
+  section.setAttribute('hidden', '');
+  body.setAttribute('hidden', '');
+  if (chevron) chevron.classList.remove('open');
+  if (langsEl) langsEl.innerHTML = '';
+  if (content) content.innerHTML = '';
+
+  // 翻訳バーが残っていたら削除
+  const oldBar = document.getElementById('transcriptTranslateBarWrap');
+  if (oldBar) oldBar.remove();
+
   try {
-    const res = await fetch(`/api/transcript-langs/${encodeURIComponent(videoId)}`);
+    const res = await fetch(`/api/transcript-langs/${encodeURIComponent(videoId)}`, { signal });
     const data = await res.json();
     const tracks = Array.isArray(data) ? data : (data.tracks || []);
 
@@ -154,7 +172,7 @@ async function initTranscript(videoId) {
         if (!body.hidden && btn.dataset.lang === currentLang) return;
         if (body.hidden) {
           body.removeAttribute('hidden');
-          chevron.classList.add('open');
+          if (chevron) chevron.classList.add('open');
         }
         loadTranscript(videoId, btn.dataset.lang, langBtns);
         // 翻訳バーの表示切り替え
@@ -165,7 +183,7 @@ async function initTranscript(videoId) {
             translateBar.setAttribute('hidden', '');
           }
         }
-      });
+      }, { signal });
       langBtns.push(btn);
       langsEl.appendChild(btn);
     });
@@ -173,6 +191,8 @@ async function initTranscript(videoId) {
     // 翻訳バー（yta で is_translatable なトラックがある場合のみ表示）
     let translateBar = null;
     if (hasTranslatable) {
+      const barWrap = document.createElement('div');
+      barWrap.id = 'transcriptTranslateBarWrap';
       translateBar = document.createElement('div');
       translateBar.className = 'transcript-translate-bar';
       translateBar.setAttribute('hidden', '');
@@ -194,7 +214,8 @@ async function initTranscript(videoId) {
         </select>
         <button class="transcript-translate-btn" id="transcriptTranslateBtn">実行</button>
       `;
-      langsEl.after(translateBar);
+      barWrap.appendChild(translateBar);
+      langsEl.after(barWrap);
 
       document.getElementById('transcriptTranslateBtn').addEventListener('click', async () => {
         const target = document.getElementById('transcriptTranslateLang').value;
@@ -214,7 +235,7 @@ async function initTranscript(videoId) {
         } catch (e) {
           content.innerHTML = '<div class="transcript-empty">翻訳エラーが発生しました。</div>';
         }
-      });
+      }, { signal });
     }
 
     header.addEventListener('click', (e) => {
@@ -222,10 +243,10 @@ async function initTranscript(videoId) {
       const isOpen = !body.hidden;
       if (isOpen) {
         body.setAttribute('hidden', '');
-        chevron.classList.remove('open');
+        if (chevron) chevron.classList.remove('open');
       } else {
         body.removeAttribute('hidden');
-        chevron.classList.add('open');
+        if (chevron) chevron.classList.add('open');
         if (!currentLang && langBtns.length > 0) {
           loadTranscript(videoId, langBtns[0].dataset.lang, langBtns);
           if (translateBar && langBtns[0].dataset.translatable === '1') {
@@ -233,9 +254,9 @@ async function initTranscript(videoId) {
           }
         }
       }
-    });
+    }, { signal });
 
   } catch (e) {
-    console.error('captions error:', e);
+    if (e.name !== 'AbortError') console.error('captions error:', e);
   }
 }
