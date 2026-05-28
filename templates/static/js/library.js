@@ -259,7 +259,12 @@ function removeFavoriteMix(mixId) {
 const LIB_SETTINGS_KEY = 'chocotube_settings';
 
 function getSettings() {
-  const defaults = { defaultSpeed: 1, loop: false, autoplayNext: true, defaultVolume: 100, autoplay: true, savePosition: true };
+  const defaults = {
+    defaultSpeed: 1, loop: false, autoplayNext: true, defaultVolume: 100, autoplay: true, savePosition: true,
+    searchRegion: 'JP', searchSort: 'relevance', searchDate: '', searchDuration: '',
+    searchType: 'all', searchFeatures: '',
+    searchIncludeShorts: true, searchSuggestions: true,
+  };
   try { return { ...defaults, ...JSON.parse(localStorage.getItem(LIB_SETTINGS_KEY) || '{}') }; }
   catch { return defaults; }
 }
