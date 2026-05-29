@@ -48,6 +48,8 @@ function initSettings() {
   const clearSubsBtn          = document.getElementById('clearSubsBtn');
   const toast                 = document.getElementById('savedToast');
 
+  const thumbnailModeSelect   = document.getElementById('thumbnailModeSelect');
+
   const searchRegionSelect    = document.getElementById('searchRegionSelect');
   const searchSortSelect      = document.getElementById('searchSortSelect');
   const searchDateSelect      = document.getElementById('searchDateSelect');
@@ -64,6 +66,7 @@ function initSettings() {
   savePositionToggle.checked   = !!settings.savePosition;
   volumeSlider.value           = String(settings.defaultVolume ?? 100);
   volumeValue.textContent      = `${settings.defaultVolume ?? 100}%`;
+  thumbnailModeSelect.value    = settings.thumbnailMode || 'proxy';
 
   searchRegionSelect.value    = settings.searchRegion   || 'JP';
   searchSortSelect.value      = settings.searchSort     || 'relevance';
@@ -95,12 +98,13 @@ function initSettings() {
   function persistPlayback() {
     saveSettings({
       ...getSettings(),
-      defaultSpeed:  parseFloat(speedSelect.value),
-      loop:          loopToggle.checked,
-      autoplayNext:  autoplayNextToggle.checked,
-      autoplay:      autoplayToggle.checked,
-      savePosition:  savePositionToggle.checked,
-      defaultVolume: parseInt(volumeSlider.value, 10),
+      defaultSpeed:    parseFloat(speedSelect.value),
+      loop:            loopToggle.checked,
+      autoplayNext:    autoplayNextToggle.checked,
+      autoplay:        autoplayToggle.checked,
+      savePosition:    savePositionToggle.checked,
+      defaultVolume:   parseInt(volumeSlider.value, 10),
+      thumbnailMode:   thumbnailModeSelect.value,
     });
     showToast();
   }
@@ -142,6 +146,7 @@ function initSettings() {
   });
   autoplayToggle.addEventListener('change', persistPlayback);
   savePositionToggle.addEventListener('change', persistPlayback);
+  thumbnailModeSelect.addEventListener('change', persistPlayback);
 
   searchRegionSelect.addEventListener('change', persistSearch);
   searchSortSelect.addEventListener('change', persistSearch);
@@ -165,6 +170,7 @@ function initSettings() {
     savePositionToggle.checked   = !!def.savePosition;
     volumeSlider.value           = String(def.defaultVolume);
     volumeValue.textContent      = `${def.defaultVolume}%`;
+    thumbnailModeSelect.value    = def.thumbnailMode || 'proxy';
     searchRegionSelect.value    = def.searchRegion   || 'JP';
     searchSortSelect.value      = def.searchSort     || 'relevance';
     searchDateSelect.value      = def.searchDate     || '';
