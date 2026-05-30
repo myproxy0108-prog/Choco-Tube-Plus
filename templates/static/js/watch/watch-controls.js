@@ -409,8 +409,9 @@ function initCustomControls() {
     const pbBody   = document.getElementById('playbackInfoBody');
     const pbToggle = document.getElementById('playbackInfoToggle');
 
-    // 開閉状態を localStorage から復元
-    let pbOpen = localStorage.getItem(PB_OPEN_KEY) === '1';
+    // 開閉状態を localStorage から復元（未設定時はデフォルトで開く）
+    const _pbStored = localStorage.getItem(PB_OPEN_KEY);
+    let pbOpen = _pbStored === null ? true : _pbStored === '1';
     function _pbApplyOpen(open) {
       pbOpen = open;
       if (pbBody)   { if (open) pbBody.removeAttribute('hidden'); else pbBody.setAttribute('hidden', ''); }
