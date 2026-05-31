@@ -4,7 +4,8 @@ YouTubeのプライバシーに配慮したフロントエンド。<br>
 Invidious APIを複数インスタンスに並列リクエストして高速・安定した動画視聴体験を提供する。<br>
 Ytdlp-Apiは今度追加していく予定
 ## 更新履歴
-
+### Ver.1.27(6/1)
+- Wista追加...つかれたぁ
 ### Ver.1.26(5/31)
 - ツール機能追加 しあtubeとxerox(v5)  
 - main.pyのリファクタ
@@ -44,14 +45,6 @@ Ytdlp-Apiは今度追加していく予定
 ### Ver.1.00
 - 公開時の機能(以下に書かれているもの)
 
-## 技術スタック
-
-- **バックエンド:** Python / FastAPI + httpx（非同期）+ Jinja2テンプレート
-- **フロントエンド:** バニラJS・CSS・HTML（モジュールバンドラー不使用）
-- **データソース:** Invidious API（`kuru-bana/yt-data` GitHub経由でインスタンスリスト管理）
-- **画像プロキシ:** `wsrv.nl`（サムネイル・アイコンをWebP変換・キャッシュ）
-- **ローカルストレージ:** 視聴履歴・チャンネル登録・お気に入り・プレイリストをブラウザに保存
-
 ## 👥 クレジット
 サポートしてくださった皆様
 - [@2A_exe様](https://github.com/c00lkimx01-creator)
@@ -59,7 +52,9 @@ Ytdlp-Apiは今度追加していく予定
 - [@siawaseok様](https://github.com/ajgpw)
   - しあtube開発
 - [@soranous様](https://github.com/xerox-pro)
-  - xerox開発 xerox-api
+  - xerox開発,xerox-api
+- [@woolisbest様](https://github.com/woolisbest)
+  - Wista開発
 ## 実装予定機能
 - rapid apiによるストリーム修得
 - 外部apiによるフォールバック
