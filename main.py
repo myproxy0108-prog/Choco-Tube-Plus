@@ -34,6 +34,8 @@ app.include_router(api.router)
 app.include_router(pages.router)
 app.include_router(tool.router)
 
+app.mount("/static", StaticFiles(directory="templates/static"), name="static")
+app.mount("/photo", StaticFiles(directory="photo"), name="photo")
 # ↓wistaのサーバー認証偽装（必ず一番最後）
 @app.get("/{full_path:path}")
 async def spa_fallback(full_path: str):
@@ -49,5 +51,3 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(StaticCacheMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=500)
-app.mount("/static", StaticFiles(directory="templates/static"), name="static")
-app.mount("/photo", StaticFiles(directory="photo"), name="photo")
