@@ -1,9 +1,32 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from core import templates
 
 router = APIRouter()
+
+_WISTA_HTML_CACHE: str | None = None
+
+
+_WISTA_AUTO_HOME = (
+    '<script>(function(){'
+    'var p=window.location.pathname;'
+    'var B="/tool/youtube/wista";'
+    'if((p===B||p===B+"/")&&localStorage.getItem("tube_auth")){'
+    'history.replaceState(null,"",B+"/home");}'
+    '})();</script>'
+)
+
+
+def _get_wista_html() -> str:
+    global _WISTA_HTML_CACHE
+    if _WISTA_HTML_CACHE is None:
+        with open("templates/tool/youtube/wista.html", "r", encoding="utf-8") as f:
+            html = f.read()
+        html = html.replace('basename:t="/"', 'basename:t="/tool/youtube/wista"', 1)
+        html = html.replace("<head>", "<head>" + _WISTA_AUTO_HOME, 1)
+        _WISTA_HTML_CACHE = html
+    return _WISTA_HTML_CACHE
 
 
 @router.get("/tool")
@@ -27,5 +50,7 @@ async def tool_youtube_xerox():
 
 
 @router.get("/tool/youtube/wista")
-async def tool_youtube_wista():
-    return FileResponse("templates/tool/youtube/wista.html", media_type="text/html")
+@router.get("/tool/youtube/wista/")
+@router.get("/tool/youtube/wista/{path:path}")
+async def tool_youtube_wista(path: str = ""):
+    return HTMLResponse(content=_get_wista_html())
