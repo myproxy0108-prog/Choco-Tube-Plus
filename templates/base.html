@@ -137,17 +137,17 @@
 
   {% block content %}{% endblock %}
 
-  <script src="/static/js/utils.js?v={{ static_ver }}"></script>
-  <script src="/static/js/components.js?v={{ static_ver }}"></script>
-  <script src="/static/js/library.js?v={{ static_ver }}"></script>
-  <script src="/static/js/header.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-home.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-trending.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-search.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-channel.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-playlist.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-mix.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-hashtag.js?v={{ static_ver }}"></script>
+  <script src="/static/js/core/utils.js?v={{ static_ver }}"></script>
+  <script src="/static/js/core/components.js?v={{ static_ver }}"></script>
+  <script src="/static/js/core/library.js?v={{ static_ver }}"></script>
+  <script src="/static/js/core/header.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-home.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-trending.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-search.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-channel.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-playlist.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-mix.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-hashtag.js?v={{ static_ver }}"></script>
   <script src="/static/js/watch/page-watch.js?v={{ static_ver }}"></script>
   <script src="/static/js/watch/watch-iframe.js?v={{ static_ver }}"></script>
   <script src="/static/js/watch/watch-hq.js?v={{ static_ver }}"></script>
@@ -158,11 +158,11 @@
   <script src="/static/js/watch/watch-playlist.js?v={{ static_ver }}"></script>
   <script src="/static/js/watch/watch-pbset.js?v={{ static_ver }}"></script>
   <script src="/static/js/watch/watch-controls.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-library.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-dl.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-settings.js?v={{ static_ver }}"></script>
-  <script src="/static/js/background.js?v={{ static_ver }}"></script>
-  <script src="/static/js/page-shorts.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-library.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-dl.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-settings.js?v={{ static_ver }}"></script>
+  <script src="/static/js/core/background.js?v={{ static_ver }}"></script>
+  <script src="/static/js/pages/page-shorts.js?v={{ static_ver }}"></script>
   {% block scripts %}{% endblock %}
   <script>
     fetch('/version').then(r=>r.json()).then(d=>{
