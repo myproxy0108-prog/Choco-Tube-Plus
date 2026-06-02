@@ -4,6 +4,8 @@ const params = new URLSearchParams(location.search);
 let currentPage = parseInt(params.get('page') || '1', 10);
 let isLoading = false;
 let seenVideoIds = new Set();
+let currentSource = 'invidious';
+let pipedNextpages = {};
 
 let allShortsFound = [];
 let shortsSeenIds = new Set();
@@ -22,6 +24,37 @@ function getFilters() {
     features: getCheckedFeatures(),
     region: document.getElementById('regionSelect').value,
   };
+}
+
+function getPipedFilters() {
+  return {
+    q: document.getElementById('searchInput').value.trim(),
+    filter: document.getElementById('pipedFilterSelect')?.value || 'all',
+    nextpage: currentPage > 1 ? (pipedNextpages[currentPage] || null) : null,
+  };
+}
+
+function buildPipedApiPath(filters) {
+  const p = new URLSearchParams();
+  if (filters.q) p.set('q', filters.q);
+  if (filters.filter && filters.filter !== 'all') p.set('filter', filters.filter);
+  if (filters.nextpage) p.set('nextpage', filters.nextpage);
+  return `/api/piped-search?${p.toString()}`;
+}
+
+function switchSourceUI(source) {
+  if (currentSource === source) return;
+  currentSource = source;
+  const filterBar = document.getElementById('filterBar');
+  if (filterBar) filterBar.setAttribute('data-search-source', source);
+}
+
+function setSourceBadge(source) {
+  let badge = document.getElementById('searchSourceBadge');
+  if (!badge) return;
+  badge.textContent = source === 'piped' ? 'Piped' : 'Invidious';
+  badge.className = `search-source-badge source-${source}`;
+  badge.hidden = false;
 }
 
 function getCheckedFeatures() {
@@ -427,6 +460,7 @@ async function doSearch(resetPage = false) {
     shortsShelfEl = null;
     shortsAutoGen++;
     currentSearchQuery = q;
+    pipedNextpages = {};
     const section = document.getElementById('shortsSection');
     if (section) { section.innerHTML = ''; section.hidden = true; }
   }
@@ -441,6 +475,7 @@ async function doSearch(resetPage = false) {
   if (!resetPage) {
     const cached = loadCache(filters);
     if (cached) {
+      setSourceBadge(currentSource);
       renderRegularResults(cached.results, q);
       if (isNewQuery) {
         currentSearchQuery = q;
@@ -467,7 +502,57 @@ async function doSearch(resetPage = false) {
   }
 
   try {
-    const raw = await fetchMain(buildApiPath(filters));
+    let raw = null;
+    let usedSource = 'invidious';
+
+    const searchOrder = (typeof getSettings === 'function') ? (getSettings().searchSourceOrder || 'inv-piped') : 'inv-piped';
+    // page 2+ navigation → stay on currentSource for Piped nextpage token continuity
+    // page 1 (initial load, new search, filter change) → always use setting
+    const primarySource = (!resetPage && currentPage > 1)
+      ? currentSource
+      : (searchOrder === 'piped-inv' ? 'piped' : 'invidious');
+
+    if (primarySource === 'piped') {
+      try {
+        const pipedFilters = getPipedFilters();
+        const resp = await fetch(buildPipedApiPath(pipedFilters), { signal: AbortSignal.timeout(12000) });
+        if (!resp.ok) throw new Error(`Piped HTTP ${resp.status}`);
+        const pipedData = await resp.json();
+        if (pipedData.error) throw new Error(pipedData.error);
+        raw = pipedData; usedSource = 'piped';
+      } catch (pipedErr) {
+        console.warn('[Search] Piped failed, trying Invidious:', pipedErr);
+        try {
+          raw = await fetchMain(buildApiPath(filters));
+          usedSource = 'invidious';
+        } catch (_) {}
+        if (!raw) throw pipedErr;
+      }
+    } else {
+      try {
+        raw = await fetchMain(buildApiPath(filters));
+        usedSource = 'invidious';
+      } catch (invErr) {
+        console.warn('[Search] Invidious failed, trying Piped:', invErr);
+        try {
+          const pipedFilters = getPipedFilters();
+          const resp = await fetch(buildPipedApiPath(pipedFilters), { signal: AbortSignal.timeout(12000) });
+          if (resp.ok) {
+            const pipedData = await resp.json();
+            if (!pipedData.error) { raw = pipedData; usedSource = 'piped'; }
+          }
+        } catch (_) {}
+        if (!raw) throw invErr;
+      }
+    }
+
+    if (usedSource !== currentSource) switchSourceUI(usedSource);
+    setSourceBadge(usedSource);
+
+    if (usedSource === 'piped' && raw.nextpage) {
+      pipedNextpages[currentPage + 1] = raw.nextpage;
+    }
+
     const allResults = Array.isArray(raw) ? raw : (raw.results || []);
     const results = allResults.filter(item => {
       const id = item.videoId || item.playlistId || item.authorId;
@@ -522,7 +607,11 @@ function updatePagination(count) {
   const pageInfo = document.getElementById('pageInfo');
 
   prevBtn.disabled = currentPage <= 1;
-  nextBtn.disabled = count < 10;
+  if (currentSource === 'piped') {
+    nextBtn.disabled = !pipedNextpages[currentPage + 1];
+  } else {
+    nextBtn.disabled = count < 10;
+  }
   pageInfo.textContent = `${currentPage} ページ`;
   pg.hidden = false;
 }
@@ -601,6 +690,11 @@ function bindEvents() {
   filterSelects.forEach(id => {
     document.getElementById(id).addEventListener('change', () => doSearch(true));
   });
+
+  const pipedFilterSel = document.getElementById('pipedFilterSelect');
+  if (pipedFilterSel) {
+    pipedFilterSel.addEventListener('change', () => doSearch(true));
+  }
 
   document.getElementById('prevBtn').addEventListener('click', () => {
     if (currentPage > 1) { currentPage--; doSearch(false); window.scrollTo({ top: 0 }); }
