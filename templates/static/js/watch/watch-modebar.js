@@ -8,6 +8,48 @@ function initModeBar(videoId) {
   const modeNocookie = document.getElementById('modeNocookie');
   const modeHQ = document.getElementById('modeHQ');
 
+  // Custom stream source dropdown
+  const streamSrcBtn   = document.getElementById('streamSrcBtn');
+  const streamSrcPanel = document.getElementById('streamSrcPanel');
+  const streamSrcLabel = document.getElementById('streamSrcLabel');
+  const _srcLabels = { auto: '並列', invidious: 'Inv', rapidapi: 'Rapid' };
+
+  function syncStreamSrcUI(val) {
+    if (streamSrcLabel) streamSrcLabel.textContent = _srcLabels[val] || val;
+    document.querySelectorAll('.pc-stream-src-item').forEach(item => {
+      item.classList.toggle('selected', item.dataset.src === val);
+    });
+  }
+  window._syncStreamSrcUI = syncStreamSrcUI;
+
+  if (streamSrcBtn && streamSrcPanel) {
+    const initVal = (typeof streamSourcePref !== 'undefined')
+      ? streamSourcePref
+      : (getSettings().streamSource || 'auto');
+    syncStreamSrcUI(initVal);
+
+    streamSrcBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      streamSrcPanel.hidden = !streamSrcPanel.hidden;
+    });
+
+    streamSrcPanel.addEventListener('click', (e) => { e.stopPropagation(); });
+
+    document.querySelectorAll('.pc-stream-src-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const val = item.dataset.src;
+        if (typeof streamSourcePref !== 'undefined') streamSourcePref = val;
+        saveSettings({ ...getSettings(), streamSource: val });
+        syncStreamSrcUI(val);
+        streamSrcPanel.hidden = true;
+        if (typeof _renderSettingsTab === 'function') _renderSettingsTab();
+        if (typeof reloadAll === 'function') reloadAll(videoId);
+      });
+    });
+
+    document.addEventListener('click', () => { streamSrcPanel.hidden = true; });
+  }
+
   reloadBtn.addEventListener('click', () => {
     errorEl.hidden = true;
     reloadBtn.hidden = true;
