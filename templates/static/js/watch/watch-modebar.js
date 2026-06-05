@@ -12,13 +12,34 @@ function initModeBar(videoId) {
   const streamSrcBtn   = document.getElementById('streamSrcBtn');
   const streamSrcPanel = document.getElementById('streamSrcPanel');
   const streamSrcLabel = document.getElementById('streamSrcLabel');
-  const _srcLabels = { auto: '並列', invidious: 'Inv', rapidapi: 'Rapid' };
+  const _srcLabels = { auto: '並列', invidious: 'Inv', rapidapi: 'Rapid', zernio: 'Zernio' };
+
+  function _isZernioSrc() {
+    return ((typeof streamSourcePref !== 'undefined') ? streamSourcePref : (getSettings().streamSource || 'auto')) === 'zernio';
+  }
+
+  function _applyZernioVisibility(val) {
+    if (!modeStream.classList.contains('active')) return;
+    const _zb  = document.getElementById('zernioBar');
+    const _zqb = document.getElementById('zernioQualBar');
+    const _qb  = document.getElementById('qualityBar');
+    if (val === 'zernio') {
+      if (_qb) _qb.setAttribute('hidden', '');
+      if (_zb) _zb.removeAttribute('hidden');
+      if (typeof setInstanceLabel === 'function') setInstanceLabel('zernio');
+    } else {
+      if (_zb) _zb.setAttribute('hidden', '');
+      if (_zqb) _zqb.setAttribute('hidden', '');
+      if (_qb) _qb.removeAttribute('hidden');
+    }
+  }
 
   function syncStreamSrcUI(val) {
     if (streamSrcLabel) streamSrcLabel.textContent = _srcLabels[val] || val;
     document.querySelectorAll('.pc-stream-src-item').forEach(item => {
       item.classList.toggle('selected', item.dataset.src === val);
     });
+    _applyZernioVisibility(val);
   }
   window._syncStreamSrcUI = syncStreamSrcUI;
 
@@ -43,7 +64,13 @@ function initModeBar(videoId) {
         syncStreamSrcUI(val);
         streamSrcPanel.hidden = true;
         if (typeof _renderSettingsTab === 'function') _renderSettingsTab();
-        if (typeof reloadAll === 'function') reloadAll(videoId);
+        if (val === 'zernio') {
+          // 旧フェッチを無効化してからZernioを起動
+          if (typeof _reloadGen !== 'undefined') _reloadGen++;
+          if (typeof window._zernioActivate === 'function') window._zernioActivate();
+        } else if (typeof reloadAll === 'function') {
+          reloadAll(videoId);
+        }
       });
     });
 
@@ -100,11 +127,9 @@ function initModeBar(videoId) {
     nocookiePlayer.src = 'about:blank';
     errorEl.hidden = true;
     reloadBtn.hidden = true;
-    document.getElementById('qualityBar').removeAttribute('hidden');
     document.getElementById('vctrls').classList.add('vctrls-show');
     setOverlayQualMode('stream');
-    const _zb = document.getElementById('zernioBar');
-    if (_zb) _zb.removeAttribute('hidden');
+    _applyZernioVisibility((typeof streamSourcePref !== 'undefined') ? streamSourcePref : (getSettings().streamSource || 'auto'));
     if (streamAltBarReady) {
       document.getElementById('streamAltBtn').removeAttribute('hidden');
       setInstanceLabel(cachedInvInstance);
@@ -423,7 +448,29 @@ function initZernioBar(videoId) {
     zernioVideoBtn.classList.add('active');
     zernioNormalBtn.classList.remove('active');
     if (zernioQualBar) zernioQualBar.removeAttribute('hidden');
+    // 最高画質（最後のボタン = 1440p AV1）を自動選択
+    if (zernioQualBtns) {
+      const bestBtn = zernioQualBtns.querySelector('.quality-btn:last-child');
+      if (bestBtn && !bestBtn.classList.contains('active')) bestBtn.click();
+    }
   });
+
+  // 外部から通常ストリームを強制取得するための関数（ソース切替時など）
+  window._zernioActivate = async () => {
+    zernioNormalBtn.classList.remove('active');
+    zernioVideoBtn.classList.remove('active');
+    if (zernioQualBar) zernioQualBar.setAttribute('hidden', '');
+    if (zernioQualBtns) zernioQualBtns.querySelectorAll('.quality-btn').forEach(b => b.classList.remove('active'));
+    zernioNormalBtn.click();
+  };
+
+  // Zernioソースが初期選択済みなら通常を自動アクティブ
+  {
+    const _curSrc = (typeof streamSourcePref !== 'undefined') ? streamSourcePref : (getSettings().streamSource || 'auto');
+    if (_curSrc === 'zernio' && !zernioNormalBtn.classList.contains('active') && !zernioVideoBtn.classList.contains('active')) {
+      zernioNormalBtn.click();
+    }
+  }
 
   // 映像のみ画質ボタン
   if (zernioQualBtns) {
@@ -445,9 +492,6 @@ function initZernioBar(videoId) {
       });
     });
   }
-
-  // ストリームモードがデフォルトなので最初から表示する
-  zernioBar.removeAttribute('hidden');
 }
 
 async function tryAutoplay(videoEl, audioEl) {
