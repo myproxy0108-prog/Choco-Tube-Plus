@@ -39,6 +39,7 @@ async function fetchBestStream(videoId, excludeParam) {
   // Zernio が勝った場合：HQ・音声のみ用に Inv/Rapid の結果をバックグラウンドで待つ
   // （HQ再生はZernioを一切使わない / 音声のみもZernioは使わない）
   if (winner.instanceUrl === 'zernio') {
+    if (typeof setPendingHQMode === 'function') setPendingHQMode();
     const capturedGen = _reloadGen;
     Promise.any([invPromise, rapidPromise]).then(bgResult => {
       if (capturedGen !== _reloadGen) return; // 世代が変わっていたら破棄
@@ -1103,7 +1104,7 @@ async function initWatch(videoId) {
     }
     setHQInstanceLabel(invInstance);
 
-    setupPlayer(streamData, videoId);
+    setupPlayer(streamData, videoId, instanceUrl);
 
     // ── 再生位置の復元と保存 ──
     {
