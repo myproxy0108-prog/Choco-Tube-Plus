@@ -59,7 +59,10 @@ async function fetchBestStream(videoId, excludeParam) {
       }
       // 音声のみ・映像のみボタンを再描画（音声のみボタンが出現する）
       if (typeof setupStreamOnlyBtns === 'function') setupStreamOnlyBtns();
-    }).catch(() => {});
+    }).catch(() => {
+      if (capturedGen !== _reloadGen) return;
+      if (typeof setHQModeError === 'function') setHQModeError();
+    });
   }
 
   return winner;
