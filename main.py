@@ -2,14 +2,17 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 
 import core
-from routers import api, pages, proxy, shorts, tool
+from routers import pages, static
+from routers.proxy import proxy, thumb
+from routers.videos import watch, channel, shorts, search, download
+from routers.tool import youtube as tool_youtube
 
 
 @asynccontextmanager
@@ -29,10 +32,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 app.include_router(proxy.router)
+app.include_router(thumb.router)
 app.include_router(shorts.router)
-app.include_router(api.router)
+app.include_router(watch.router)
+app.include_router(channel.router)
+app.include_router(search.router)
+app.include_router(download.router)
+app.include_router(static.router)
 app.include_router(pages.router)
-app.include_router(tool.router)
+app.include_router(tool_youtube.router)
 
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
 app.mount("/photo", StaticFiles(directory="photo"), name="photo")
