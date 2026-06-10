@@ -32,7 +32,7 @@ GAMES = [
         "slug": "block-blast",
         "title": "Block Blast",
         "thumb": "/photo/game/block-blast.jpg",
-        "desc": "ブロックを配置してラインを消す爽快パズルゲーム。落ちないのがポイント。",
+        "desc": "ブロックを配置してラインを消す爽快パズルゲーム。",
         "file": "templates/tool/game/fun/block-blast.html",
     },
     {
@@ -46,7 +46,7 @@ GAMES = [
         "slug": "dyping",
         "title": "DyPing",
         "thumb": "/photo/game/dyping.gif",
-        "desc": "タイピングで戦うリズムアクションゲーム。打鍵速度が勝負を決める。",
+        "desc": "世にも奇妙なtyping~ダイピング~",
         "file": "templates/tool/game/fun/dyping.html",
     },
     {
@@ -145,25 +145,25 @@ GAMES = [
 _GAME_MAP = {g["slug"]: g for g in GAMES}
 
 
-@router.get("/game/home")
+@router.get("/tool/game")
 async def game_home(request: Request):
     return templates.TemplateResponse(
         request, "tool/game/home.html", {"games": GAMES, "active": "tool"}
     )
 
 
-@router.get("/game/home/{game_slug}")
+@router.get("/tool/game/{game_slug}")
 async def game_play(request: Request, game_slug: str):
     game = _GAME_MAP.get(game_slug)
     if game is None or not os.path.exists(game["file"]):
         from fastapi.responses import RedirectResponse
-        return RedirectResponse("/game/home")
+        return RedirectResponse("/tool/game")
     return templates.TemplateResponse(
         request, "tool/game/play.html", {"game": game, "active": "tool"}
     )
 
 
-@router.get("/game/raw/{game_slug}")
+@router.get("/tool/game/raw/{game_slug}")
 async def game_raw(game_slug: str):
     game = _GAME_MAP.get(game_slug)
     if game is None or not os.path.exists(game["file"]):
