@@ -2,6 +2,7 @@ function instanceHostname(invInstance) {
   if (!invInstance) return '';
   if (invInstance === 'rapidapi') return 'RapidAPI';
   if (invInstance === 'zernio') return 'Zernio';
+  if (invInstance === 'piped') return 'Piped';
   try { return new URL(invInstance).hostname; } catch { return invInstance; }
 }
 
