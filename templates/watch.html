@@ -14,6 +14,19 @@
           <iframe id="nocookiePlayer" class="video-player nocookie-player" hidden allowfullscreen allow="autoplay; encrypted-media; picture-in-picture" src="about:blank"></iframe>
           <iframe id="eduPlayer" class="video-player nocookie-player" hidden allowfullscreen allow="autoplay; encrypted-media; picture-in-picture" src="about:blank"></iframe>
 
+          <!-- Piped proxy confirm overlay -->
+          <div class="piped-confirm-overlay" id="pipedConfirmOverlay" hidden>
+            <div class="piped-confirm-inner">
+              <div class="piped-confirm-title">Proxy再生しますか？</div>
+              <div class="piped-confirm-desc">Pipedサーバーを経由してプロキシ再生します（1日2回まで）。<br>直接再生する場合は「Direct」を選択してください。</div>
+              <div class="piped-confirm-btns">
+                <button class="piped-confirm-btn piped-confirm-yes" id="pipedYesBtn">はい（Proxy）</button>
+                <button class="piped-confirm-btn piped-confirm-no" id="pipedNoBtn">Direct再生</button>
+              </div>
+              <div class="piped-confirm-limit-note" hidden>今日のProxy上限（2回）に達しました</div>
+            </div>
+          </div>
+
           <!-- Center play overlay -->
           <div class="vctrls-center-play" id="vcCenterPlay">
             <div class="vctrls-center-icon" id="vcCenterIcon"></div>
@@ -133,6 +146,7 @@
               <button class="pc-mode-btn" id="modeHQ" title="高画質・高音質モード（映像+音声を個別選択）">高画質・高音質</button>
               <button class="pc-mode-btn" id="modeNocookie">nocookie</button>
               <button class="pc-mode-btn" id="modeEdu">edu</button>
+              <button class="pc-mode-btn" id="modePiped" title="Piped APIからストリームを取得して再生（音付き360p）">Piped</button>
             </div>
 
             <div class="pc-divider"></div>
@@ -225,6 +239,11 @@
             <span class="pc-alt-status" id="eduStatus"></span>
           </div>
 
+          <!-- Piped stream bar -->
+          <div class="pc-row pc-quality-row" id="pipedBar" hidden>
+            <span class="pc-label">Piped</span>
+            <span class="pc-alt-status" id="pipedStatus" hidden></span>
+          </div>
 
         </div>
 
