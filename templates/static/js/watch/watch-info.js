@@ -8,6 +8,14 @@ function renderVideoInfo(meta, videoId) {
 
   document.getElementById('watchTitle').textContent = meta.title || '';
 
+  const sourceTag = document.getElementById('infoSourceTag');
+  if (sourceTag) {
+    const isPiped = meta._source === 'piped';
+    sourceTag.textContent = isPiped ? '📡 Piped' : '🔵 Invidious';
+    sourceTag.className = 'info-source-tag ' + (isPiped ? 'source-piped' : 'source-invidious');
+    sourceTag.removeAttribute('hidden');
+  }
+
   const views = formatViews(meta.viewCount);
   const date = meta.publishedText || '';
   const likes = meta.likeCount ? `👍 ${meta.likeCount.toLocaleString()}` : '';
