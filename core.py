@@ -94,6 +94,35 @@ templates.env.globals["static_ver"] = _STATIC_VER
 
 category_cache: dict = {}
 
+# ── Proxy response cache ───────────────────────────────────────────────────────
+
+_proxy_resp_cache: dict = {}
+_proxy_resp_ttl: dict = {
+    "video":           180,
+    "trending":        300,
+    "trending_music":  300,
+    "trending_gaming": 300,
+    "trending_news":   300,
+    "trending_movies": 300,
+    "search":          60,
+    "search_suggestions": 30,
+    "channel":         120,
+    "channel_videos":  120,
+    "channel_shorts":  120,
+    "channel_streams": 120,
+    "channel_latest":  120,
+    "popular":         300,
+    "hashtag":         90,
+    "comments":        120,
+    "playlist":        180,
+}
+_PROXY_RESP_DEFAULT_TTL = 60
+_PROXY_RESP_MAX_SIZE = 500
+
+# ── In-flight request deduplication ──────────────────────────────────────────
+
+_proxy_inflight: dict = {}
+
 
 _INVIDIOUS_LIST_KEY = "__invidious_list__"
 
@@ -330,6 +359,45 @@ def _apply_enrichment(data, innertube_items: list, channel_id: str):
 
 # ── Proxy parallel ────────────────────────────────────────────────────────────
 
+def _proxy_cache_get(key: str) -> dict | None:
+    entry = _proxy_resp_cache.get(key)
+    if not entry:
+        return None
+    if time.time() - entry["time"] > entry["ttl"]:
+        _proxy_resp_cache.pop(key, None)
+        return None
+    return entry["data"]
+
+
+def _is_valid_proxy_data(data) -> bool:
+    """Return True only when the response contains usable content (not an error body)."""
+    if data is None:
+        return False
+    if isinstance(data, dict):
+        if data.get("error"):
+            return False
+        if not data:
+            return False
+    if isinstance(data, list) and len(data) == 0:
+        return False
+    return True
+
+
+def _proxy_cache_set(key: str, result: dict, ttl: int) -> None:
+    data = result.get("data") if isinstance(result, dict) else result
+    if not _is_valid_proxy_data(data):
+        return
+    if len(_proxy_resp_cache) >= _PROXY_RESP_MAX_SIZE:
+        now = time.time()
+        stale = [k for k, v in _proxy_resp_cache.items() if now - v["time"] > v["ttl"]]
+        for k in stale:
+            _proxy_resp_cache.pop(k, None)
+        if len(_proxy_resp_cache) >= _PROXY_RESP_MAX_SIZE:
+            oldest = min(_proxy_resp_cache, key=lambda k: _proxy_resp_cache[k]["time"])
+            _proxy_resp_cache.pop(oldest, None)
+    _proxy_resp_cache[key] = {"data": result, "time": time.time(), "ttl": ttl}
+
+
 async def proxy_parallel(
     category: str,
     invidious_path: str,
@@ -337,61 +405,96 @@ async def proxy_parallel(
     prefer_valid_videos: bool = False,
     prefer_valid_stream: bool = False,
     override_instances: list = None,
+    no_cache: bool = False,
 ) -> dict:
-    instances = override_instances if override_instances is not None else await get_instances(category)
-    if exclude_list:
-        instances = [b for b in instances if not any(ex in b or b in ex for ex in exclude_list)]
-    if not instances:
-        raise Exception(f'No working instances for category "{category}" after exclusions')
+    cache_key = f"{category}:{invidious_path}"
+    ttl = _proxy_resp_ttl.get(category, _PROXY_RESP_DEFAULT_TTL)
 
-    task_to_base = {
-        asyncio.create_task(_try_instance(base, invidious_path)): base
-        for base in instances
-    }
-    tasks = list(task_to_base)
-    errors = []
-    pending = set(tasks)
-    winner = None
-    fallback = None
+    if not no_cache and not exclude_list and override_instances is None:
+        cached = _proxy_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        if cache_key in _proxy_inflight:
+            fut = _proxy_inflight[cache_key]
+            try:
+                return await asyncio.shield(fut)
+            except Exception:
+                pass
+
+    loop = asyncio.get_event_loop()
+    fut: asyncio.Future = loop.create_future()
+    if not no_cache and not exclude_list and override_instances is None:
+        _proxy_inflight[cache_key] = fut
+
     try:
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                exc = task.exception()
-                if exc is None:
-                    result = task.result()
-                    if prefer_valid_videos:
-                        if _has_valid_videos(result["data"]):
-                            if winner is None:
-                                winner = result
-                        else:
-                            if fallback is None:
-                                fallback = result
-                    elif prefer_valid_stream:
-                        if _has_valid_stream(result["data"]):
-                            if winner is None:
-                                winner = result
-                        else:
-                            if fallback is None:
-                                fallback = result
-                    elif winner is None:
-                        winner = result
-                else:
-                    msg = str(exc) or type(exc).__name__
-                    errors.append(f"{task_to_base.get(task, '?')}:{msg}")
-            if winner is not None:
-                break
-    finally:
-        for t in pending:
-            t.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        instances = override_instances if override_instances is not None else await get_instances(category)
+        if exclude_list:
+            instances = [b for b in instances if not any(ex in b or b in ex for ex in exclude_list)]
+        if not instances:
+            raise Exception(f'No working instances for category "{category}" after exclusions')
 
-    best = winner or fallback
-    if best is not None:
+        task_to_base = {
+            asyncio.create_task(_try_instance(base, invidious_path)): base
+            for base in instances
+        }
+        tasks = list(task_to_base)
+        errors = []
+        pending = set(tasks)
+        winner = None
+        fallback = None
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    exc = task.exception()
+                    if exc is None:
+                        result = task.result()
+                        if prefer_valid_videos:
+                            if _has_valid_videos(result["data"]):
+                                if winner is None:
+                                    winner = result
+                            else:
+                                if fallback is None:
+                                    fallback = result
+                        elif prefer_valid_stream:
+                            if _has_valid_stream(result["data"]):
+                                if winner is None:
+                                    winner = result
+                            else:
+                                if fallback is None:
+                                    fallback = result
+                        elif winner is None:
+                            winner = result
+                    else:
+                        msg = str(exc) or type(exc).__name__
+                        errors.append(f"{task_to_base.get(task, '?')}:{msg}")
+                if winner is not None:
+                    break
+        finally:
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        best = winner or fallback
+        if best is None:
+            category_cache.pop(category, None)
+            raise Exception("All instances failed: " + ", ".join(errors))
+
+        if not no_cache and not exclude_list and override_instances is None:
+            _proxy_cache_set(cache_key, best, ttl)
+
+        if not fut.done():
+            fut.set_result(best)
         return best
-    category_cache.pop(category, None)
-    raise Exception("All instances failed: " + ", ".join(errors))
+
+    except Exception as exc:
+        if not fut.done():
+            fut.set_exception(exc)
+        raise
+    finally:
+        _proxy_inflight.pop(cache_key, None)
 
 
 # ── Path mapping ──────────────────────────────────────────────────────────────
