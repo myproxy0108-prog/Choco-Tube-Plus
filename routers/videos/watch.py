@@ -367,23 +367,25 @@ _videoinfo_inflight: dict = {}
 
 
 @router.get("/api/videoinfo/{video_id}")
-async def api_video_info(video_id: str):
+async def api_video_info(video_id: str, nocache: bool = False):
     now = time.time()
-    cached = _VIDEOINFO_CACHE.get(video_id)
-    if cached and now - cached["time"] < _VIDEOINFO_TTL:
-        return JSONResponse(cached["data"])
+    if not nocache:
+        cached = _VIDEOINFO_CACHE.get(video_id)
+        if cached and now - cached["time"] < _VIDEOINFO_TTL:
+            return JSONResponse(cached["data"])
 
-    if video_id in _videoinfo_inflight:
-        fut = _videoinfo_inflight[video_id]
-        try:
-            data = await asyncio.shield(fut)
-            return JSONResponse(data)
-        except Exception:
-            pass
+        if video_id in _videoinfo_inflight:
+            fut = _videoinfo_inflight[video_id]
+            try:
+                data = await asyncio.shield(fut)
+                return JSONResponse(data)
+            except Exception:
+                pass
 
     loop = asyncio.get_event_loop()
     fut: asyncio.Future = loop.create_future()
-    _videoinfo_inflight[video_id] = fut
+    if not nocache:
+        _videoinfo_inflight[video_id] = fut
 
     try:
         async def _inv() -> dict | None:
@@ -433,7 +435,8 @@ async def api_video_info(video_id: str):
             fut.set_exception(exc)
         raise
     finally:
-        _videoinfo_inflight.pop(video_id, None)
+        if not nocache:
+            _videoinfo_inflight.pop(video_id, None)
 
 
 # ── Piped stream ───────────────────────────────────────────────────────────────
@@ -715,41 +718,3 @@ async def _fetch_piped_videoinfo(video_id: str) -> dict | None:
     return None
 
 
-@router.get("/api/videoinfo/{video_id}")
-async def api_videoinfo(video_id: str):
-    now = time.time()
-    cached = _VIDEOINFO_CACHE.get(video_id)
-    if cached and now - cached["time"] < _VIDEOINFO_TTL:
-        return JSONResponse(cached["data"])
-
-    # Invidious と Piped を並列で叩き、先に有効データを返した方を即返却する。
-    # Piped が先に取れた場合はそのまま返し、クライアント側の upgrade ロジック
-    # (_source === 'piped' のとき fetchMain('/api/videos/') で Invidious に差し替え)
-    # にバックグラウンドアップグレードを任せる。
-    inv_task   = asyncio.create_task(_fetch_inv_videoinfo(video_id))
-    piped_task = asyncio.create_task(_fetch_piped_videoinfo(video_id))
-
-    data    = None
-    pending = {inv_task, piped_task}
-
-    while pending:
-        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-        for task in done:
-            if task.exception() is None:
-                result = task.result()
-                if result:
-                    data = result
-        # どちらかで取れたら即座にキャンセルして返す
-        if data:
-            break
-
-    for t in pending:
-        t.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-
-    if data:
-        _VIDEOINFO_CACHE[video_id] = {"data": data, "time": now}
-        return JSONResponse(data)
-
-    return JSONResponse({"error": "動画情報の取得に失敗しました"}, status_code=502)
