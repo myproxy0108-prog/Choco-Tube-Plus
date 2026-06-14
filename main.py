@@ -21,7 +21,7 @@ AUTH_COOKIE_NAME = "choco_auth"
 AUTH_COOKIE_VALUE = "choco_session_ok"
 
 # パスを完全一致 or prefix で許可するリスト（ログイン不要）
-_PUBLIC_EXACT = {"/login", "/api/login"}
+_PUBLIC_EXACT = {"/login", "/api/login", "/forgot", "/api/quiz-login"}
 _PUBLIC_PREFIX = ("/static/", "/photo/", "/proxy/", "/thumb/")
 
 
