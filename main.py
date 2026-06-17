@@ -65,15 +65,27 @@ app.include_router(pages.router)
 app.include_router(tool_youtube.router)
 app.include_router(tool_game.router)
 app.include_router(tool_programing.router)
-# --- ここから追加 ---
-# 以下の部分を main.py の app.include_router の下、app.mount の上に入れてください
+from fastapi import Request, Response # 忘れずにインポート
+
+# ... 中略 (routersのincludeなど) ...
+
 @app.api_route("/manga/{full_path:path}", methods=["GET", "POST", "HEAD", "OPTIONS"])
 async def manga_proxy(request: Request, full_path: str):
-    # クエリパラメータを含めたターゲットURLの構築
-    query = f"?{request.url.query}" if request.url.query else ""
-    # Workerには /manga/URL の形で飛ばす
-    url = f"{CF_WORKER_URL}/manga/{full_path}{query}"
+    """
+    Renderで受けた /manga/https://... を 
+    そのまま Workerの /manga/https://... に転送する
+    """
+    # 1. クエリパラメータ（?q=... など）を取得
+    query_string = str(request.query_params)
+    
+    # 2. WorkerへのURLを構築
+    # full_path には "https://example.com/style.css" などが入る
+    if query_string:
+        worker_url = f"{CF_WORKER_URL}/manga/{full_path}?{query_string}"
+    else:
+        worker_url = f"{CF_WORKER_URL}/manga/{full_path}"
 
+    # 3. ヘッダーの準備（RenderのドメインをWorkerに伝えて置換を同期させる）
     proxy_headers = {
         "X-Forwarded-Host": request.headers.get("host", ""),
         "X-Forwarded-Proto": "https",
@@ -83,26 +95,39 @@ async def manga_proxy(request: Request, full_path: str):
     }
 
     try:
+        # 4. core.http_client を使って Workerを叩く
+        # bodyが必要なメソッド（POSTなど）の場合はbodyを取得して送る
+        body = await request.body() if request.method not in ["GET", "HEAD"] else None
+        
         async_res = await core.http_client.request(
             method=request.method,
-            url=url,
+            url=worker_url,
             headers=proxy_headers,
-            content=await request.body() if request.method not in ["GET", "HEAD"] else None,
-            follow_redirects=True
+            content=body,
+            follow_redirects=True # Redirectも追う
         )
 
+        # 5. 二重圧縮エラーを避けるために不要なヘッダーを除去
         excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
-        res_headers = {k: v for k, v in async_res.headers.items() if k.lower() not in excluded_headers}
+        res_headers = {
+            k: v for k, v in async_res.headers.items() 
+            if k.lower() not in excluded_headers
+        }
         res_headers["Access-Control-Allow-Origin"] = "*"
 
+        # 6. ブラウザへ返す
         return Response(
             content=async_res.content,
             status_code=async_res.status_code,
             headers=res_headers,
             media_type=async_res.headers.get("content-type")
         )
+
     except Exception as e:
-        return Response(status_code=502, content=str(e))
+        print(f"Manga Proxy Error: {e}")
+        return Response(content=f"Worker Error: {str(e)}", status_code=502)
+
+# --- この下に spa_fallback (@app.get("/{full_path:path}")) を置く ---
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
 app.mount("/photo", StaticFiles(directory="photo"), name="photo")
 # ↓wistaのサーバー認証偽装（必ず一番最後）
