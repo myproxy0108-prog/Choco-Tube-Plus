@@ -65,67 +65,56 @@ app.include_router(pages.router)
 app.include_router(tool_youtube.router)
 app.include_router(tool_game.router)
 app.include_router(tool_programing.router)
-from fastapi import Request, Response # 忘れずにインポート
 
-# ... 中略 (routersのincludeなど) ...
-
-@app.api_route("/manga/{full_path:path}", methods=["GET", "POST", "HEAD", "OPTIONS"])
-async def manga_proxy(request: Request, full_path: str):
-    """
-    Renderで受けた /manga/https://... を 
-    そのまま Workerの /manga/https://... に転送する
-    """
-    # 1. クエリパラメータ（?q=... など）を取得
-    query_string = str(request.query_params)
-    
-    # 2. WorkerへのURLを構築
-    # full_path には "https://example.com/style.css" などが入る
-    if query_string:
-        worker_url = f"{CF_WORKER_URL}/manga/{full_path}?{query_string}"
-    else:
-        worker_url = f"{CF_WORKER_URL}/manga/{full_path}"
-
-    # 3. ヘッダーの準備（RenderのドメインをWorkerに伝えて置換を同期させる）
-    proxy_headers = {
-        "X-Forwarded-Host": request.headers.get("host", ""),
-        "X-Forwarded-Proto": "https",
-        "User-Agent": request.headers.get("user-agent", ""),
-        "Accept": request.headers.get("accept", ""),
-        "Cookie": request.headers.get("cookie", ""),
-    }
-
+@app.route('/manga/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+@app.route('/manga/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+def manga_proxy(path):
     try:
-        # 4. core.http_client を使って Workerを叩く
-        # bodyが必要なメソッド（POSTなど）の場合はbodyを取得して送る
-        body = await request.body() if request.method not in ["GET", "HEAD"] else None
+        # 1. ターゲットURLの構築
+        # Cloudflare Workers側が期待するパス形式に合わせて調整
+        # ここでは /manga/abc -> CF_URL/abc となるようにしています
+        target_url = f"{CF_WORKER_URL}/{path}"
         
-        async_res = await core.http_client.request(
-            method=request.method,
-            url=worker_url,
-            headers=proxy_headers,
-            content=body,
-            follow_redirects=True # Redirectも追う
-        )
+        # クエリパラメータがあれば追加
+        if request.query_string:
+            target_url += f"?{request.query_string.decode('utf-8')}"
 
-        # 5. 二重圧縮エラーを避けるために不要なヘッダーを除去
-        excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
-        res_headers = {
-            k: v for k, v in async_res.headers.items() 
-            if k.lower() not in excluded_headers
+        # 2. ヘッダーの準備（Node.js版の再現）
+        headers = {
+            'X-Forwarded-Host': request.host,
+            'X-Forwarded-Proto': 'https',
+            'User-Agent': request.headers.get('User-Agent'),
+            'Accept': request.headers.get('Accept'),
+            'Cookie': request.headers.get('Cookie', '')
         }
-        res_headers["Access-Control-Allow-Origin"] = "*"
 
-        # 6. ブラウザへ返す
-        return Response(
-            content=async_res.content,
-            status_code=async_res.status_code,
-            headers=res_headers,
-            media_type=async_res.headers.get("content-type")
+        # 3. リクエストの転送
+        response = requests.request(
+            method=request.method,
+            url=target_url,
+            headers=headers,
+            data=request.get_data(),
+            cookies=request.cookies,
+            allow_redirects=False, # リダイレクトはクライアントに任せる
+            timeout=30
         )
+
+        # 4. レスポンスの構築
+        # 不要なヘッダー（圧縮関連など）を除外してクライアントに返す
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        headers_to_send = [
+            (name, value) for (name, value) in response.raw.headers.items()
+            if name.lower() not in excluded_headers
+        ]
+        
+        # CORS対応 (Node.js版の res.set("Access-Control-Allow-Origin", "*") に相当)
+        headers_to_send.append(('Access-Control-Allow-Origin', '*'))
+
+        return Response(response.content, response.status_code, headers_to_send)
 
     except Exception as e:
-        print(f"Manga Proxy Error: {e}")
-        return Response(content=f"Worker Error: {str(e)}", status_code=502)
+        print(f"Error: {e}")
+        return "読み込みに失敗しました。Workers側を確認してください。", 500
 
 # --- この下に spa_fallback (@app.get("/{full_path:path}")) を置く ---
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
