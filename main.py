@@ -133,15 +133,6 @@ async def manga_proxy(request: Request, path: str):
                 status_code=500
             )
 
-# 他のルートへの干渉がないことを確認するためのテスト用ルート
-@app.get("/")
-async def root():
-    return {"message": "This is the main page. No interference from /manga/"}
-
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 3000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
 
 # --- この下に spa_fallback (@app.get("/{full_path:path}")) を置く ---
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
