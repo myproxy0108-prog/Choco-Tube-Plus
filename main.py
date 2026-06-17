@@ -65,56 +65,83 @@ app.include_router(pages.router)
 app.include_router(tool_youtube.router)
 app.include_router(tool_game.router)
 app.include_router(tool_programing.router)
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import Response
+import httpx
+import uvicorn
 
-@app.route('/manga/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
-@app.route('/manga/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
-def manga_proxy(path):
-    try:
-        # 1. ターゲットURLの構築
-        # Cloudflare Workers側が期待するパス形式に合わせて調整
-        # ここでは /manga/abc -> CF_URL/abc となるようにしています
-        target_url = f"{CF_WORKER_URL}/{path}"
-        
-        # クエリパラメータがあれば追加
-        if request.query_string:
-            target_url += f"?{request.query_string.decode('utf-8')}"
+app = FastAPI()
 
-        # 2. ヘッダーの準備（Node.js版の再現）
-        headers = {
-            'X-Forwarded-Host': request.host,
-            'X-Forwarded-Proto': 'https',
-            'User-Agent': request.headers.get('User-Agent'),
-            'Accept': request.headers.get('Accept'),
-            'Cookie': request.headers.get('Cookie', '')
-        }
+# あなたのCloudflare WorkerのURL
+CF_WORKER_URL = "https://mangarw-api.myproxy0108.workers.dev"
 
-        # 3. リクエストの転送
-        response = requests.request(
-            method=request.method,
-            url=target_url,
-            headers=headers,
-            data=request.get_data(),
-            cookies=request.cookies,
-            allow_redirects=False, # リダイレクトはクライアントに任せる
-            timeout=30
-        )
+# /manga/ 配下のみを対象にする設定
+# {path:path} はスラッシュを含む全てのパスを受け取るワイルドカード
+@app.api_route("/manga/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
+async def manga_proxy(request: Request, path: str):
+    # 1. ターゲットURLの構築
+    # パラメータがある場合はそれも引き継ぐ
+    query_params = str(request.query_params)
+    url = f"{CF_WORKER_URL}/{path}"
+    if query_params:
+        url += f"?{query_params}"
 
-        # 4. レスポンスの構築
-        # 不要なヘッダー（圧縮関連など）を除外してクライアントに返す
-        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-        headers_to_send = [
-            (name, value) for (name, value) in response.raw.headers.items()
-            if name.lower() not in excluded_headers
-        ]
-        
-        # CORS対応 (Node.js版の res.set("Access-Control-Allow-Origin", "*") に相当)
-        headers_to_send.append(('Access-Control-Allow-Origin', '*'))
+    # 2. ヘッダーの準備
+    # クライアントからのヘッダーをコピーしつつ、必要な項目を上書き
+    headers = dict(request.headers)
+    headers.update({
+        "X-Forwarded-Host": request.headers.get("host", ""),
+        "X-Forwarded-Proto": "https",
+    })
+    
+    # 転送時にエラーになる可能性のあるホストヘッダーなどは削除しておく（httpxが自動で設定するため）
+    headers.pop("host", None)
+    headers.pop("content-length", None)
 
-        return Response(response.content, response.status_code, headers_to_send)
+    async with httpx.AsyncClient() as client:
+        try:
+            # 3. Cloudflare Workersへリクエストを送信
+            proxy_res = await client.request(
+                method=request.method,
+                url=url,
+                headers=headers,
+                content=await request.body(),
+                timeout=30.0,
+                follow_redirects=False
+            )
 
-    except Exception as e:
-        print(f"Error: {e}")
-        return "読み込みに失敗しました。Workers側を確認してください。", 500
+            # 4. レスポンスの構築
+            # 不要なヘッダー（圧縮関連や転送設定）を除外
+            excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+            res_headers = {
+                k: v for k, v in proxy_res.headers.items()
+                if k.lower() not in excluded_headers
+            }
+            
+            # CORS設定の追加
+            res_headers["Access-Control-Allow-Origin"] = "*"
+
+            return Response(
+                content=proxy_res.content,
+                status_code=proxy_res.status_code,
+                headers=res_headers
+            )
+
+        except httpx.RequestError as exc:
+            return Response(
+                content=f"読み込みに失敗しました: {exc}",
+                status_code=500
+            )
+
+# 他のルートへの干渉がないことを確認するためのテスト用ルート
+@app.get("/")
+async def root():
+    return {"message": "This is the main page. No interference from /manga/"}
+
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 3000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 # --- この下に spa_fallback (@app.get("/{full_path:path}")) を置く ---
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
