@@ -134,25 +134,6 @@ async def manga_proxy(request: Request, path: str):
             )
 
 
-# --- この下に spa_fallback (@app.get("/{full_path:path}")) を置く ---
-app.mount("/static", StaticFiles(directory="templates/static"), name="static")
-app.mount("/photo", StaticFiles(directory="photo"), name="photo")
-# ↓wistaのサーバー認証偽装（必ず一番最後）
-@app.get("/{full_path:path}")
-async def spa_fallback(full_path: str):
-    from fastapi.responses import Response
-    if (
-        full_path.startswith("__replco")
-        or full_path.startswith("@")
-        or full_path.startswith("node_modules")
-        or full_path.endswith(".js")
-        or full_path.endswith(".ts")
-        or full_path.endswith(".tsx")
-        or full_path.endswith(".jsx")
-        or full_path.endswith(".map")
-    ):
-        return Response(status_code=404)
-    return FileResponse("templates/tool/youtube/wista.html")
 
 class StaticCacheMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
