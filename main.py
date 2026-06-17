@@ -66,13 +66,13 @@ app.include_router(tool_youtube.router)
 app.include_router(tool_game.router)
 app.include_router(tool_programing.router)
 # --- ここから追加 ---
-from fastapi import Request, Response
-
+# 以下の部分を main.py の app.include_router の下、app.mount の上に入れてください
 @app.api_route("/manga/{full_path:path}", methods=["GET", "POST", "HEAD", "OPTIONS"])
 async def manga_proxy(request: Request, full_path: str):
-    url = f"{CF_WORKER_URL}/{full_path}"
-    if request.url.query:
-        url += f"?{request.url.query}"
+    # クエリパラメータを含めたターゲットURLの構築
+    query = f"?{request.url.query}" if request.url.query else ""
+    # Workerには /manga/URL の形で飛ばす
+    url = f"{CF_WORKER_URL}/manga/{full_path}{query}"
 
     proxy_headers = {
         "X-Forwarded-Host": request.headers.get("host", ""),
@@ -88,7 +88,7 @@ async def manga_proxy(request: Request, full_path: str):
             url=url,
             headers=proxy_headers,
             content=await request.body() if request.method not in ["GET", "HEAD"] else None,
-            follow_redirects=False
+            follow_redirects=True
         )
 
         excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
@@ -102,9 +102,7 @@ async def manga_proxy(request: Request, full_path: str):
             media_type=async_res.headers.get("content-type")
         )
     except Exception as e:
-        print(f"Manga Proxy Error: {e}")
-        return Response(status_code=502, content="Worker connection failed")
-
+        return Response(status_code=502, content=str(e))
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
 app.mount("/photo", StaticFiles(directory="photo"), name="photo")
 # ↓wistaのサーバー認証偽装（必ず一番最後）
