@@ -19,6 +19,7 @@ from routers.tool import programing as tool_programing
 
 AUTH_COOKIE_NAME = "choco_auth"
 AUTH_COOKIE_VALUE = "choco_session_ok"
+CF_WORKER_URL = "https://api-nemu.myproxy0108.workers.dev"
 
 # パスを完全一致 or prefix で許可するリスト（ログイン不要）
 _PUBLIC_EXACT = {"/login", "/api/login", "/forgot", "/api/quiz-login", "/whats", "/version"}
@@ -64,6 +65,45 @@ app.include_router(pages.router)
 app.include_router(tool_youtube.router)
 app.include_router(tool_game.router)
 app.include_router(tool_programing.router)
+# --- ここから追加 ---
+from fastapi import Request, Response
+
+@app.api_route("/manga/{full_path:path}", methods=["GET", "POST", "HEAD", "OPTIONS"])
+async def manga_proxy(request: Request, full_path: str):
+    url = f"{CF_WORKER_URL}/{full_path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
+
+    proxy_headers = {
+        "X-Forwarded-Host": request.headers.get("host", ""),
+        "X-Forwarded-Proto": "https",
+        "User-Agent": request.headers.get("user-agent", ""),
+        "Accept": request.headers.get("accept", ""),
+        "Cookie": request.headers.get("cookie", ""),
+    }
+
+    try:
+        async_res = await core.http_client.request(
+            method=request.method,
+            url=url,
+            headers=proxy_headers,
+            content=await request.body() if request.method not in ["GET", "HEAD"] else None,
+            follow_redirects=False
+        )
+
+        excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+        res_headers = {k: v for k, v in async_res.headers.items() if k.lower() not in excluded_headers}
+        res_headers["Access-Control-Allow-Origin"] = "*"
+
+        return Response(
+            content=async_res.content,
+            status_code=async_res.status_code,
+            headers=res_headers,
+            media_type=async_res.headers.get("content-type")
+        )
+    except Exception as e:
+        print(f"Manga Proxy Error: {e}")
+        return Response(status_code=502, content="Worker connection failed")
 
 app.mount("/static", StaticFiles(directory="templates/static"), name="static")
 app.mount("/photo", StaticFiles(directory="photo"), name="photo")
